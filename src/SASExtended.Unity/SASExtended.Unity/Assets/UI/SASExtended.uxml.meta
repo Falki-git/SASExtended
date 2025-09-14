@@ -1,0 +1,10 @@
+fileFormatVersion: 2
+guid: 31fed276a42ad25439d9cdb327c1633d
+ScriptedImporter:
+  internalIDToNameTable: []
+  externalObjects: {}
+  serializedVersion: 2
+  userData: 
+  assetBundleName: sasextended_ui.bundle
+  assetBundleVariant: 
+  script: {fileID: 13804, guid: 0000000000000000e000000000000000, type: 0}
