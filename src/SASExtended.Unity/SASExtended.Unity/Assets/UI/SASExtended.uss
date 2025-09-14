@@ -42,7 +42,7 @@
 }
 
 .root {
-    padding-left: 10px;
+    padding-left: 8px;
     padding-right: 8px;
     padding-top: 5px;
     padding-bottom: 5px;
@@ -99,10 +99,6 @@
     border-bottom-left-radius: 15px;
     border-top-right-radius: 0;
     border-bottom-right-radius: 15px;
-    padding-left: 10px;
-    padding-right: 10px;
-    padding-top: 10px;
-    padding-bottom: 10px;
     border-top-width: 1px;
 }
 
@@ -166,12 +162,13 @@
     flex-direction: row;
     max-height: 25px;
     min-height: 25px;
+    display: none;
 }
 
 .title__container {
     flex-grow: 1;
     flex-direction: row;
-    width: 30%;
+    width: 90%;
     border-left-color: rgb(0, 0, 0);
     border-right-color: rgb(0, 0, 0);
     border-top-color: rgb(0, 0, 0);
@@ -193,7 +190,7 @@
 .title-text {
     -unity-text-align: middle-left;
     font-size: 14px;
-    padding-left: 10px;
+    padding-left: 5px;
     -unity-font-definition: var(--font-title-big);
     padding-top: 6px;
     padding-bottom: 2px;
@@ -321,7 +318,7 @@
 .close-button__container {
     align-items: flex-end;
     flex-grow: 1;
-    width: 5%;
+    width: 10%;
     height: 100%;
     border-left-color: rgb(0, 0, 0);
     border-right-color: rgb(0, 0, 0);
@@ -582,7 +579,7 @@
 }
 
 .side-toggle--big {
-    width: 90px;
+    width: 55px;
     flex-direction: row;
     border-left-color: rgba(0, 0, 0, 0);
     border-right-color: rgba(0, 0, 0, 0);
@@ -595,7 +592,7 @@
     padding-top: 0;
     padding-bottom: 0;
     font-size: 12px;
-    height: 60px;
+    height: 40px;
     margin-top: 5px;
     margin-bottom: 5px;
     background-color: rgba(0, 0, 0, 0);
@@ -653,8 +650,7 @@
 
 .side-toggle__led {
     width: 3px;
-    height: 14px;
-    min-width: 2px;
+    height: 20px;
     margin-left: 3px;
     border-top-left-radius: 1px;
     border-bottom-left-radius: 1px;
@@ -664,8 +660,7 @@
 
 .side-toggle--big__led {
     width: 3px;
-    height: 45px;
-    min-width: 2px;
+    height: 20px;
     margin-left: 3px;
     border-top-left-radius: 1px;
     border-bottom-left-radius: 1px;
@@ -693,10 +688,13 @@
 .side-toggle--big__text {
     flex-grow: 1;
     padding-right: 0;
-    -unity-text-align: upper-center;
+    -unity-text-align: middle-center;
     padding-top: 0;
     padding-bottom: 0;
     padding-left: 3px;
+    -unity-paragraph-spacing: -40px;
+    word-spacing: -20px;
+    letter-spacing: -10px;
 }
 
 .side-toggle__led--disabled {
@@ -1033,6 +1031,8 @@
     flex-grow: 1;
     -unity-text-align: middle-center;
     height: 15px;
+    padding-left: 0;
+    padding-right: 0;
 }
 
 .tab-toggle__led--checked {
