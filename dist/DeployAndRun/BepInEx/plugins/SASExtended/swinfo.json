@@ -1,0 +1,30 @@
+{
+  "spec": "2.0",
+  "mod_id": "SASExtended",
+  "author": "Falki",
+  "name": "SAS Extended",
+  "description": "SAS Extended",
+  "source": "todo",
+  "version": "0.0.1",
+  "version_check": "todo",
+  "ksp2_version": {
+    "min": "0.2.1",
+    "max": "*"
+  },
+  "dependencies": [
+    {
+      "id": "com.github.x606.spacewarp",
+      "version": {
+        "min": "1.9.0",
+        "max": "*"
+      }
+    },
+    {
+      "id": "UitkForKsp2",
+      "version": {
+        "min": "2.4.2",
+        "max": "*"
+      }
+    }
+  ]
+}
