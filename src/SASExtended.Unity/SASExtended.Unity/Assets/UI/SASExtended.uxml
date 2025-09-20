@@ -7,46 +7,43 @@
         <ui:VisualElement name="middle-container" class="middle-container">
             <ui:VisualElement name="body" class="body">
                 <ui:VisualElement style="flex-grow: 1; background-color: rgba(0, 0, 0, 0);">
-                    <ui:VisualElement name="row-1" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 30%; width: 100%; align-items: center;">
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="S VEL\n+" IsBig="true" IsEnabled="true" />
+                    <ui:VisualElement name="row-1" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 20%; width: 100%; align-items: center; margin-top: 5px;">
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="S VEL\n+" IsEnabled="true" IsSmall="false" IsBig="true" IsToggled="false" />
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="S VEL\n-" IsBig="true" IsEnabled="true" />
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="SURF" IsBig="true" IsEnabled="true" IsToggled="true" />
                     </ui:VisualElement>
-                    <ui:VisualElement name="row-2" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 30%; width: 100%; align-items: center;">
+                    <ui:VisualElement name="row-2" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 25%; width: 100%; align-items: center;">
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="H VEL\n+" IsBig="true" IsEnabled="true" />
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="H VEL\n-" IsBig="true" IsEnabled="true" />
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="UP" IsBig="true" IsEnabled="true" />
                     </ui:VisualElement>
-                    <ui:VisualElement name="attitude-controls" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 40%; padding-top: 5px; padding-bottom: 5px; width: 100%; padding-left: 10px; padding-right: 10px; align-items: center;">
-                        <ui:VisualElement name="heading-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 33%; flex-direction: row; -unity-text-align: middle-left; margin-bottom: 5px;">
-                            <ui:Toggle name="Toggle" style="max-width: 20px; min-width: 15px; max-height: 20px; min-height: 15px; margin-left: 0; margin-right: 0; margin-top: 0; margin-bottom: 0; border-top-left-radius: 6px; border-bottom-left-radius: 6px; border-top-right-radius: 6px; border-bottom-right-radius: 6px;" />
-                            <ui:Label tabindex="-1" text="Heading" display-tooltip-when-elided="true" style="font-size: 12px; margin-left: 5px; max-width: 60px; min-width: 60px;" />
-                            <ui:FloatField value="42.2" name="FloatField" style="max-width: 40px; min-width: 40px; margin-left: 0; margin-right: 0; margin-top: 0; margin-bottom: 0; color: rgb(0, 0, 0);" />
-                            <ui:Label tabindex="-1" text="°" display-tooltip-when-elided="true" style="font-size: 12px;" />
-                            <ui:Button text="-" display-tooltip-when-elided="true" class="zoom-controls__button" style="margin-left: 5px; margin-top: 0;" />
-                            <ui:Button text="+" display-tooltip-when-elided="true" class="zoom-controls__button" style="margin-left: 5px; margin-top: 0;" />
-                            <ui:Button text="0" display-tooltip-when-elided="true" class="zoom-controls__button" style="margin-left: 5px; margin-top: 0;" />
-                            <ui:Button text="90" display-tooltip-when-elided="true" class="zoom-controls__button" style="margin-left: 5px; margin-top: 0;" />
+                    <ui:VisualElement name="attitude-controls" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 50%; padding-top: 0; padding-bottom: 5px; width: 100%; padding-left: 0; padding-right: 0; align-items: center;">
+                        <ui:VisualElement name="heading-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 30%; flex-direction: row; -unity-text-align: middle-left; padding-top: 2px; padding-bottom: 2px; align-items: center; width: 100%; justify-content: space-around; padding-right: 2px; padding-left: 2px;">
+                            <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="Heading" IsSmall="true" IsEnabled="true" IsToggled="true" />
+                            <ui:FloatField value="360" class="attitude-input-field" />
+                            <ui:Label tabindex="-1" text="°" display-tooltip-when-elided="true" style="font-size: 10px; padding-left: 0; padding-right: 0; padding-top: 0; padding-bottom: 0; width: 5px;" />
+                            <ui:Button text="-" display-tooltip-when-elided="true" class="attitude__button" />
+                            <ui:Button text="+" display-tooltip-when-elided="true" class="attitude__button" />
+                            <ui:Button text="0" display-tooltip-when-elided="true" class="attitude__button" />
+                            <ui:Button text="90" display-tooltip-when-elided="true" class="attitude__button" style="width: 20px;" />
                         </ui:VisualElement>
-                        <ui:VisualElement name="pitch-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 33%; flex-direction: row; -unity-text-align: middle-left; margin-bottom: 5px;">
-                            <ui:Toggle name="Toggle" style="max-width: 20px; min-width: 15px; max-height: 20px; min-height: 15px; margin-left: 0; margin-right: 0; margin-top: 0; margin-bottom: 0; border-top-left-radius: 6px; border-bottom-left-radius: 6px; border-top-right-radius: 6px; border-bottom-right-radius: 6px;" />
-                            <ui:Label tabindex="-1" text="Pitch" display-tooltip-when-elided="true" style="font-size: 12px; margin-left: 5px; max-width: 60px; min-width: 60px;" />
-                            <ui:FloatField value="42.2" style="max-width: 40px; min-width: 40px; margin-left: 0; margin-right: 0; margin-top: 0; margin-bottom: 0;" />
-                            <ui:Label tabindex="-1" text="°" display-tooltip-when-elided="true" style="font-size: 12px;" />
-                            <ui:Button text="-" display-tooltip-when-elided="true" class="zoom-controls__button" style="margin-left: 5px; margin-top: 0;" />
-                            <ui:Button text="+" display-tooltip-when-elided="true" class="zoom-controls__button" style="margin-left: 5px; margin-top: 0;" />
-                            <ui:Button text="0" display-tooltip-when-elided="true" class="zoom-controls__button" style="margin-left: 5px; margin-top: 0;" />
-                            <ui:Button text="90" display-tooltip-when-elided="true" class="zoom-controls__button" style="margin-left: 5px; margin-top: 0;" />
+                        <ui:VisualElement name="pitch-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 30%; flex-direction: row; -unity-text-align: middle-left; padding-bottom: 2px; padding-top: 2px; align-items: center; width: 100%; padding-left: 2px; padding-right: 2px; justify-content: space-around;">
+                            <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="Pitch" IsSmall="true" IsToggled="true" IsEnabled="true" />
+                            <ui:FloatField value="42.2" class="attitude-input-field" />
+                            <ui:Label tabindex="-1" text="°" display-tooltip-when-elided="true" style="font-size: 10px; padding-left: 0; padding-right: 0; padding-top: 0; padding-bottom: 0; width: 5px;" />
+                            <ui:Button text="-" display-tooltip-when-elided="true" class="attitude__button" />
+                            <ui:Button text="+" display-tooltip-when-elided="true" class="attitude__button" />
+                            <ui:Button text="0" display-tooltip-when-elided="true" class="attitude__button" />
+                            <ui:Button text="90" display-tooltip-when-elided="true" class="attitude__button" style="width: 20px;" />
                         </ui:VisualElement>
-                        <ui:VisualElement name="roll-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 33%; flex-direction: row; -unity-text-align: middle-left;">
-                            <ui:Toggle name="Toggle" style="max-width: 20px; min-width: 15px; max-height: 20px; min-height: 15px; margin-left: 0; margin-right: 0; margin-top: 0; margin-bottom: 0; border-top-left-radius: 6px; border-bottom-left-radius: 6px; border-top-right-radius: 6px; border-bottom-right-radius: 6px;" />
-                            <ui:Label tabindex="-1" text="Roll" display-tooltip-when-elided="true" style="font-size: 12px; margin-left: 5px; max-width: 60px; min-width: 60px;" />
-                            <ui:FloatField value="42.2" style="max-width: 40px; min-width: 40px; margin-left: 0; margin-right: 0; margin-top: 0; margin-bottom: 0;" />
-                            <ui:Label tabindex="-1" text="°" display-tooltip-when-elided="true" style="font-size: 12px;" />
-                            <ui:Button text="-" display-tooltip-when-elided="true" class="zoom-controls__button" style="margin-left: 5px; margin-top: 0;" />
-                            <ui:Button text="+" display-tooltip-when-elided="true" class="zoom-controls__button" style="margin-left: 5px; margin-top: 0;" />
-                            <ui:Button text="0" display-tooltip-when-elided="true" class="zoom-controls__button" style="margin-left: 5px; margin-top: 0;" />
-                            <ui:Button text="180" display-tooltip-when-elided="true" class="zoom-controls__button" style="margin-left: 5px; margin-top: 0;" />
+                        <ui:VisualElement name="roll-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 30%; flex-direction: row; -unity-text-align: middle-left; padding-top: 2px; padding-bottom: 2px; align-items: center; width: 100%; padding-left: 2px; padding-right: 2px; justify-content: space-around;">
+                            <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="Roll" IsSmall="true" IsEnabled="true" IsToggled="true" />
+                            <ui:FloatField value="42.2" class="attitude-input-field" />
+                            <ui:Label tabindex="-1" text="°" display-tooltip-when-elided="true" style="font-size: 10px; padding-left: 0; padding-right: 0; padding-top: 0; padding-bottom: 0; width: 5px;" />
+                            <ui:Button text="-" display-tooltip-when-elided="true" class="attitude__button" />
+                            <ui:Button text="+" display-tooltip-when-elided="true" class="attitude__button" />
+                            <ui:Button text="0" display-tooltip-when-elided="true" class="attitude__button" />
+                            <ui:Button text="180" display-tooltip-when-elided="true" class="attitude__button" style="width: 20px;" />
                         </ui:VisualElement>
                     </ui:VisualElement>
                     <ui:Label tabindex="-1" text="Overlay: ON" display-tooltip-when-elided="true" name="notification" picking-mode="Ignore" class="notification" />
@@ -58,13 +55,13 @@
                 </ui:VisualElement>
             </ui:VisualElement>
             <ui:VisualElement name="tabs" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); max-height: 30px; min-height: 30px; flex-direction: row; align-items: flex-end;">
-                <SASExtended.UI.Controls.TabToggleControl focusable="true" Text="ORB" name="orb" IsEnabled="true" />
+                <SASExtended.UI.Controls.TabToggleControl focusable="true" Text="ORB" name="orb" IsEnabled="true" IsToggled="true" />
                 <SASExtended.UI.Controls.TabToggleControl focusable="true" Text="SURF" name="surf" IsEnabled="true" />
                 <SASExtended.UI.Controls.TabToggleControl focusable="true" Text="TGT" name="target" IsEnabled="true" />
                 <SASExtended.UI.Controls.TabToggleControl focusable="true" Text="SPEC" name="special" IsEnabled="true" />
             </ui:VisualElement>
         </ui:VisualElement>
-        <ui:VisualElement name="upper-container" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); max-height: 40px; min-height: 40px; flex-direction: row; justify-content: space-between; padding-bottom: 10px; padding-left: 0; padding-right: 0; margin-bottom: 10px;">
+        <ui:VisualElement name="upper-container" style="flex-grow: 0; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-between; padding-bottom: 10px; padding-left: 0; padding-right: 0; margin-bottom: 10px; height: 10%; flex-shrink: 0;">
             <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="OFF" IsEnabled="true" IsBig="false" />
             <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="KILL\nROT" IsEnabled="true" IsToggled="false" IsBig="false" />
             <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="NODE" IsEnabled="true" />

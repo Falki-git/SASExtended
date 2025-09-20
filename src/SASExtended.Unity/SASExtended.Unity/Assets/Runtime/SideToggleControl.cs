@@ -1,4 +1,5 @@
-﻿using UnityEngine.UIElements;
+﻿using System;
+using UnityEngine.UIElements;
 
 namespace SASExtended.UI.Controls
 {
@@ -19,37 +20,103 @@ namespace SASExtended.UI.Controls
         public const string UssTextDisabled = UssClassName_Text + "--disabled";
 
         public const string UssClassName_Big = UssClassName + "--big";
+        public const string UssClassName_Big_Container = UssClassName_Big + "__container";
         public const string UssClassName_Big_Led = UssClassName_Big + "__led";
         public const string UssClassName_Big_Text = UssClassName_Big + "__text";
+
+        public const string UssClassName_Small = UssClassName + "--small";
+        public const string UssClassName_Small_Container = UssClassName_Small + "__container";
+        public const string UssClassName_Small_Led = UssClassName_Small + "__led";
+        public const string UssClassName_Small_Text = UssClassName_Small + "__text";
 
         public bool IsToggled { get; private set; }
         public bool IsEnabled { get; private set; }
 
         private bool _isBig;
-        public bool IsBig { get => _isBig; set => SetBigToggle(value); }
+        public bool IsBig
+        {
+            get => _isBig;
+            set
+            {
+                SetBigToggle(value);
+                _isBig = value;
+            }
+        }
+            
+
+        private bool _isSmall;
+        public bool IsSmall
+        {
+            get => _isSmall;
+            set
+            {
+                SetSmallToggle(value);
+                _isSmall = value;
+            }
+        }
 
         private VisualElement _connector;
         private VisualElement _container;
         private VisualElement _led;
         private Label _text;
 
-        private void SetBigToggle(bool isBig)
+        private void SetBigToggle(bool value)
         {
-            if (isBig)
+            if (value)
             {
                 RemoveFromClassList(UssClassName);
+                _container.RemoveFromClassList(UssClassName_Container);
                 _led.RemoveFromClassList(UssClassName_Led);
                 _text.RemoveFromClassList(UssClassName_Text);
+                RemoveFromClassList(UssClassName_Small);
+                _container.RemoveFromClassList(UssClassName_Small_Container);
+                _led.RemoveFromClassList(UssClassName_Small_Led);
+                _text.RemoveFromClassList(UssClassName_Small_Text);
+
                 AddToClassList(UssClassName_Big);
+                _container.AddToClassList(UssClassName_Big_Container);
                 _led.AddToClassList(UssClassName_Big_Led);
                 _text.AddToClassList(UssClassName_Big_Text);
             }
             else
             {
                 RemoveFromClassList(UssClassName_Big);
+                _container.RemoveFromClassList(UssClassName_Big_Container);
                 _led.RemoveFromClassList(UssClassName_Big_Led);
                 _text.RemoveFromClassList(UssClassName_Big_Text);
                 AddToClassList(UssClassName);
+                _container.AddToClassList(UssClassName_Container);
+                _led.AddToClassList(UssClassName_Led);
+                _text.AddToClassList(UssClassName_Text);
+            }
+        }
+
+        private void SetSmallToggle(bool value)
+        {
+            if (value)
+            {
+                RemoveFromClassList(UssClassName);
+                _container.RemoveFromClassList(UssClassName_Container);
+                _led.RemoveFromClassList(UssClassName_Led);
+                _text.RemoveFromClassList(UssClassName_Text);
+                RemoveFromClassList(UssClassName_Big);
+                _container.RemoveFromClassList(UssClassName_Big_Container);
+                _led.RemoveFromClassList(UssClassName_Big_Led);
+                _text.RemoveFromClassList(UssClassName_Big_Text);
+
+                AddToClassList(UssClassName_Small);
+                _container.AddToClassList(UssClassName_Small_Container);
+                _led.AddToClassList(UssClassName_Small_Led);
+                _text.AddToClassList(UssClassName_Small_Text);
+            }
+            else
+            {
+                RemoveFromClassList(UssClassName_Small);
+                _container.RemoveFromClassList(UssClassName_Small_Container);
+                _led.RemoveFromClassList(UssClassName_Small_Led);
+                _text.RemoveFromClassList(UssClassName_Small_Text);                
+                AddToClassList(UssClassName);
+                _container.AddToClassList(UssClassName_Container);
                 _led.AddToClassList(UssClassName_Led);
                 _text.AddToClassList(UssClassName_Text);
             }
@@ -200,6 +267,9 @@ namespace SASExtended.UI.Controls
             UxmlBoolAttributeDescription _isBig = new()
             {  name = "IsBig", defaultValue = false };
 
+            UxmlBoolAttributeDescription _isSmall = new()
+            { name = "IsSmall", defaultValue = false };
+
             UxmlBoolAttributeDescription _isEnabled = new()
             { name = "IsEnabled", defaultValue = false };
             
@@ -214,6 +284,7 @@ namespace SASExtended.UI.Controls
                 {
                     control.TextValue = _name.GetValueFromBag(bag, cc);
                     control.IsBig = _isBig.GetValueFromBag(bag, cc);
+                    control.IsSmall = _isSmall.GetValueFromBag(bag, cc);
                     control.SetEnabled(_isEnabled.GetValueFromBag(bag, cc));
                     control.SwitchToggleState(_isToggled.GetValueFromBag(bag, cc), false);
                 }
