@@ -3,73 +3,104 @@
     <ui:VisualElement name="root" class="root main-gui">
         <ui:VisualElement name="footer" class="footer">
             <ui:VisualElement name="legend__container" class="legend__container" />
+            <ui:Label tabindex="-1" text="Overlay: ON" display-tooltip-when-elided="true" name="notification" picking-mode="Ignore" class="notification" />
         </ui:VisualElement>
         <ui:VisualElement name="middle-container" class="middle-container">
             <ui:VisualElement name="body" class="body">
-                <ui:VisualElement style="flex-grow: 1; background-color: rgba(0, 0, 0, 0);">
+                <ui:VisualElement name="orb-container" style="flex-grow: 1; display: none;">
                     <ui:VisualElement name="row-1" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 20%; width: 100%; align-items: center; margin-top: 5px;">
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="S VEL\n+" IsEnabled="true" IsSmall="false" IsBig="true" IsToggled="false" />
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="S VEL\n-" IsBig="true" IsEnabled="true" />
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="SURF" IsBig="true" IsEnabled="true" IsToggled="true" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="PRO\nGRADE" IsEnabled="true" IsSmall="false" IsBig="true" IsToggled="false" name="prograde" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="NORM\n+" IsBig="true" IsEnabled="true" name="normal" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="RAD\n+" IsBig="true" IsEnabled="true" IsToggled="true" name="radialin" />
                     </ui:VisualElement>
                     <ui:VisualElement name="row-2" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 25%; width: 100%; align-items: center;">
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="H VEL\n+" IsBig="true" IsEnabled="true" />
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="H VEL\n-" IsBig="true" IsEnabled="true" />
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="UP" IsBig="true" IsEnabled="true" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="RETRO\nGRADE" IsBig="true" IsEnabled="true" name="retrograde" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="NORM\n-" IsBig="true" IsEnabled="true" name="antinormal" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="RAD\n-" IsBig="true" IsEnabled="true" name="radialout" />
                     </ui:VisualElement>
-                    <ui:VisualElement name="attitude-controls" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 50%; padding-top: 0; padding-bottom: 5px; width: 100%; padding-left: 0; padding-right: 0; align-items: center;">
-                        <ui:VisualElement name="heading-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 30%; flex-direction: row; -unity-text-align: middle-left; padding-top: 2px; padding-bottom: 2px; align-items: center; width: 100%; justify-content: space-around; padding-right: 2px; padding-left: 2px;">
-                            <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="Heading" IsSmall="true" IsEnabled="true" IsToggled="true" />
-                            <ui:FloatField value="360" class="attitude-input-field" />
-                            <ui:Label tabindex="-1" text="°" display-tooltip-when-elided="true" style="font-size: 10px; padding-left: 0; padding-right: 0; padding-top: 0; padding-bottom: 0; width: 5px;" />
-                            <ui:Button text="-" display-tooltip-when-elided="true" class="attitude__button" />
-                            <ui:Button text="+" display-tooltip-when-elided="true" class="attitude__button" />
-                            <ui:Button text="0" display-tooltip-when-elided="true" class="attitude__button" />
-                            <ui:Button text="90" display-tooltip-when-elided="true" class="attitude__button" style="width: 20px;" />
-                        </ui:VisualElement>
-                        <ui:VisualElement name="pitch-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 30%; flex-direction: row; -unity-text-align: middle-left; padding-bottom: 2px; padding-top: 2px; align-items: center; width: 100%; padding-left: 2px; padding-right: 2px; justify-content: space-around;">
-                            <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="Pitch" IsSmall="true" IsToggled="true" IsEnabled="true" />
-                            <ui:FloatField value="42.2" class="attitude-input-field" />
-                            <ui:Label tabindex="-1" text="°" display-tooltip-when-elided="true" style="font-size: 10px; padding-left: 0; padding-right: 0; padding-top: 0; padding-bottom: 0; width: 5px;" />
-                            <ui:Button text="-" display-tooltip-when-elided="true" class="attitude__button" />
-                            <ui:Button text="+" display-tooltip-when-elided="true" class="attitude__button" />
-                            <ui:Button text="0" display-tooltip-when-elided="true" class="attitude__button" />
-                            <ui:Button text="90" display-tooltip-when-elided="true" class="attitude__button" style="width: 20px;" />
-                        </ui:VisualElement>
-                        <ui:VisualElement name="roll-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 30%; flex-direction: row; -unity-text-align: middle-left; padding-top: 2px; padding-bottom: 2px; align-items: center; width: 100%; padding-left: 2px; padding-right: 2px; justify-content: space-around;">
-                            <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="Roll" IsSmall="true" IsEnabled="true" IsToggled="true" />
-                            <ui:FloatField value="42.2" class="attitude-input-field" />
-                            <ui:Label tabindex="-1" text="°" display-tooltip-when-elided="true" style="font-size: 10px; padding-left: 0; padding-right: 0; padding-top: 0; padding-bottom: 0; width: 5px;" />
-                            <ui:Button text="-" display-tooltip-when-elided="true" class="attitude__button" />
-                            <ui:Button text="+" display-tooltip-when-elided="true" class="attitude__button" />
-                            <ui:Button text="0" display-tooltip-when-elided="true" class="attitude__button" />
-                            <ui:Button text="180" display-tooltip-when-elided="true" class="attitude__button" style="width: 20px;" />
-                        </ui:VisualElement>
+                </ui:VisualElement>
+                <ui:VisualElement name="surf-container" style="flex-grow: 1; display: none;">
+                    <ui:VisualElement name="row-1" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 20%; width: 100%; align-items: center; margin-top: 5px;">
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="S VEL\n+" IsEnabled="true" IsSmall="false" IsBig="true" IsToggled="false" name="svelplus" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="S VEL\n-" IsBig="true" IsEnabled="true" name="svelminus" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="SURF" IsBig="true" IsEnabled="true" IsToggled="true" name="surf" />
                     </ui:VisualElement>
-                    <ui:Label tabindex="-1" text="Overlay: ON" display-tooltip-when-elided="true" name="notification" picking-mode="Ignore" class="notification" />
-                    <ui:VisualElement name="testing-ground" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); position: absolute; width: 100%; height: 100%; display: none;">
-                        <ui:VisualElement style="flex-grow: 0; background-color: rgba(0, 0, 0, 0); background-image: url(&apos;project://database/Assets/Images/Other/red%20circle.png?fileID=2800000&amp;guid=3216beb11eabb0e4089eb9b1b8f69efe&amp;type=3#red circle&apos;); width: 50px; height: 50px; left: 124px; opacity: 0.2; position: absolute; top: 85px;" />
-                        <ui:VisualElement name="red" style="flex-grow: 0; background-image: url(&apos;project://database/Assets/Images/Other/white_circle.png?fileID=2800000&amp;guid=36da56de644cdaa42b4bf4fc6179f272&amp;type=3#white_circle&apos;); width: 50px; height: 50px; left: 311px; opacity: 1; position: absolute; top: 103px; -unity-background-image-tint-color: rgba(255, 0, 0, 0.2); border-left-width: 1px; border-right-width: 1px; border-top-width: 1px; border-bottom-width: 1px; border-left-color: rgba(0, 0, 0, 0.1); border-right-color: rgba(0, 0, 0, 0.1); border-top-color: rgba(0, 0, 0, 0.1); border-bottom-color: rgba(0, 0, 0, 0.1); border-top-left-radius: 60px; border-bottom-left-radius: 60px; border-top-right-radius: 60px; border-bottom-right-radius: 60px;" />
-                        <ui:VisualElement style="flex-grow: 0; background-color: rgba(0, 0, 0, 0); background-image: url(&apos;project://database/Assets/Images/Other/red%20circle.png?fileID=2800000&amp;guid=3216beb11eabb0e4089eb9b1b8f69efe&amp;type=3#red circle&apos;); width: 50px; height: 50px; left: 472px; opacity: 0.2; top: 0; position: absolute;" />
+                    <ui:VisualElement name="row-2" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 25%; width: 100%; align-items: center;">
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="H VEL\n+" IsBig="true" IsEnabled="true" name="hvelplus" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="H VEL\n-" IsBig="true" IsEnabled="true" name="hvelminus" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="UP" IsBig="true" IsEnabled="true" name="up" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+                <ui:VisualElement name="tgt-container" style="flex-grow: 1; display: flex;">
+                    <ui:VisualElement name="row-1" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 20%; width: 100%; align-items: center; margin-top: 5px;">
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="1" IsEnabled="true" IsSmall="false" IsBig="true" IsToggled="false" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="2" IsBig="true" IsEnabled="true" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="3" IsBig="true" IsEnabled="true" IsToggled="true" />
+                    </ui:VisualElement>
+                    <ui:VisualElement name="row-2" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 25%; width: 100%; align-items: center;">
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="4" IsBig="true" IsEnabled="true" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="5" IsBig="true" IsEnabled="true" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="6" IsBig="true" IsEnabled="true" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+                <ui:VisualElement name="spec-container" style="flex-grow: 1; display: none;">
+                    <ui:VisualElement name="row-1" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 20%; width: 100%; align-items: center; margin-top: 5px;">
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="1" IsEnabled="true" IsSmall="false" IsBig="true" IsToggled="false" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="2" IsBig="true" IsEnabled="true" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="3" IsBig="true" IsEnabled="true" IsToggled="true" />
+                    </ui:VisualElement>
+                    <ui:VisualElement name="row-2" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 25%; width: 100%; align-items: center;">
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="4" IsBig="true" IsEnabled="true" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="5" IsBig="true" IsEnabled="true" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="6" IsBig="true" IsEnabled="true" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+                <ui:VisualElement name="attitude-controls" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 50%; padding-top: 0; padding-bottom: 5px; width: 100%; padding-left: 0; padding-right: 0; align-items: center;">
+                    <ui:VisualElement name="heading-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 30%; flex-direction: row; -unity-text-align: middle-left; padding-top: 2px; padding-bottom: 2px; align-items: center; width: 100%; justify-content: space-around; padding-right: 2px; padding-left: 2px;">
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="Heading" IsSmall="true" IsEnabled="true" IsToggled="true" />
+                        <ui:FloatField value="360" class="attitude-input-field" />
+                        <ui:Label tabindex="-1" text="°" display-tooltip-when-elided="true" style="font-size: 10px; padding-left: 0; padding-right: 0; padding-top: 0; padding-bottom: 0; width: 5px;" />
+                        <ui:Button text="-" display-tooltip-when-elided="true" class="attitude__button" />
+                        <ui:Button text="+" display-tooltip-when-elided="true" class="attitude__button" />
+                        <ui:Button text="0" display-tooltip-when-elided="true" class="attitude__button" />
+                        <ui:Button text="90" display-tooltip-when-elided="true" class="attitude__button" style="width: 20px;" />
+                    </ui:VisualElement>
+                    <ui:VisualElement name="pitch-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 30%; flex-direction: row; -unity-text-align: middle-left; padding-bottom: 2px; padding-top: 2px; align-items: center; width: 100%; padding-left: 2px; padding-right: 2px; justify-content: space-around;">
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="Pitch" IsSmall="true" IsToggled="true" IsEnabled="true" />
+                        <ui:FloatField value="42.2" class="attitude-input-field" />
+                        <ui:Label tabindex="-1" text="°" display-tooltip-when-elided="true" style="font-size: 10px; padding-left: 0; padding-right: 0; padding-top: 0; padding-bottom: 0; width: 5px;" />
+                        <ui:Button text="-" display-tooltip-when-elided="true" class="attitude__button" />
+                        <ui:Button text="+" display-tooltip-when-elided="true" class="attitude__button" />
+                        <ui:Button text="0" display-tooltip-when-elided="true" class="attitude__button" />
+                        <ui:Button text="90" display-tooltip-when-elided="true" class="attitude__button" style="width: 20px;" />
+                    </ui:VisualElement>
+                    <ui:VisualElement name="roll-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 30%; flex-direction: row; -unity-text-align: middle-left; padding-top: 2px; padding-bottom: 2px; align-items: center; width: 100%; padding-left: 2px; padding-right: 2px; justify-content: space-around;">
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="Roll" IsSmall="true" IsEnabled="true" IsToggled="true" />
+                        <ui:FloatField value="42.2" class="attitude-input-field" />
+                        <ui:Label tabindex="-1" text="°" display-tooltip-when-elided="true" style="font-size: 10px; padding-left: 0; padding-right: 0; padding-top: 0; padding-bottom: 0; width: 5px;" />
+                        <ui:Button text="-" display-tooltip-when-elided="true" class="attitude__button" />
+                        <ui:Button text="+" display-tooltip-when-elided="true" class="attitude__button" />
+                        <ui:Button text="0" display-tooltip-when-elided="true" class="attitude__button" />
+                        <ui:Button text="180" display-tooltip-when-elided="true" class="attitude__button" style="width: 20px;" />
                     </ui:VisualElement>
                 </ui:VisualElement>
             </ui:VisualElement>
             <ui:VisualElement name="tabs" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); max-height: 30px; min-height: 30px; flex-direction: row; align-items: flex-end;">
-                <SASExtended.UI.Controls.TabToggleControl focusable="true" Text="ORB" name="orb" IsEnabled="true" IsToggled="true" />
-                <SASExtended.UI.Controls.TabToggleControl focusable="true" Text="SURF" name="surf" IsEnabled="true" />
-                <SASExtended.UI.Controls.TabToggleControl focusable="true" Text="TGT" name="target" IsEnabled="true" />
-                <SASExtended.UI.Controls.TabToggleControl focusable="true" Text="SPEC" name="special" IsEnabled="true" />
+                <SASExtended.UI.Controls.TabToggleControl focusable="true" Text="ORB" name="orb-tab" IsEnabled="true" IsToggled="true" />
+                <SASExtended.UI.Controls.TabToggleControl focusable="true" Text="SURF" name="surf-tab" IsEnabled="true" />
+                <SASExtended.UI.Controls.TabToggleControl focusable="true" Text="TGT" name="tgt-tab" IsEnabled="true" />
+                <SASExtended.UI.Controls.TabToggleControl focusable="true" Text="SPEC" name="spec-tab" IsEnabled="true" />
             </ui:VisualElement>
         </ui:VisualElement>
         <ui:VisualElement name="upper-container" style="flex-grow: 0; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-between; padding-bottom: 10px; padding-left: 0; padding-right: 0; margin-bottom: 10px; height: 10%; flex-shrink: 0;">
-            <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="OFF" IsEnabled="true" IsBig="false" />
-            <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="KILL\nROT" IsEnabled="true" IsToggled="false" IsBig="false" />
-            <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="NODE" IsEnabled="true" />
+            <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="OFF" IsEnabled="true" IsBig="false" name="off" />
+            <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="KILL\nROT" IsEnabled="true" IsToggled="false" IsBig="false" name="killrot" />
+            <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="NODE" IsEnabled="true" name="node" />
         </ui:VisualElement>
         <ui:VisualElement name="header" class="header">
             <ui:VisualElement name="title__container" class="title__container">
                 <ui:VisualElement name="icon" class="icon" />
-                <ui:Label tabindex="-1" text="SAS Extended" display-tooltip-when-elided="true" name="title-text" class="title-text" />
+                <ui:Label tabindex="-1" text="SAS EXTENDED" display-tooltip-when-elided="true" name="title-text" class="title-text" />
             </ui:VisualElement>
             <ui:VisualElement name="close-button__container" class="close-button__container">
                 <ui:Button name="close-button" class="close-button">
