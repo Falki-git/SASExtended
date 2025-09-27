@@ -59,7 +59,7 @@ public class SASExtendedPlugin : BaseSpaceWarpPlugin
         Appbar.RegisterAppButton(
             ModName,
             ToolbarFlightButtonID,
-            AssetManager.GetAsset<Texture2D>($"{Info.Metadata.GUID}/images/icon.png"),
+            AssetManager.GetAsset<Texture2D>($"{Info.Metadata.GUID}/sasextended_ui/images/icons/retrograde.png"),
             isOpen => SceneController.Instance.ToggleUI(isOpen)
             //SceneController.Instance.ToggleUI
         );

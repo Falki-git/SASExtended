@@ -7,11 +7,11 @@
         </ui:VisualElement>
         <ui:VisualElement name="middle-container" class="middle-container">
             <ui:VisualElement name="body" class="body">
-                <ui:VisualElement name="orb-container" style="flex-grow: 1; display: none;">
+                <ui:VisualElement name="orb-container" style="flex-grow: 1; display: flex;">
                     <ui:VisualElement name="row-1" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 20%; width: 100%; align-items: center; margin-top: 5px;">
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="PRO\nGRADE" IsEnabled="true" IsSmall="false" IsBig="true" IsToggled="false" name="prograde" />
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="NORM\n+" IsBig="true" IsEnabled="true" name="normal" />
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="RAD\n+" IsBig="true" IsEnabled="true" IsToggled="true" name="radialin" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="RAD\n+" IsBig="true" IsEnabled="true" name="radialin" />
                     </ui:VisualElement>
                     <ui:VisualElement name="row-2" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 25%; width: 100%; align-items: center;">
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="RETRO\nGRADE" IsBig="true" IsEnabled="true" name="retrograde" />
@@ -23,7 +23,7 @@
                     <ui:VisualElement name="row-1" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 20%; width: 100%; align-items: center; margin-top: 5px;">
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="S VEL\n+" IsEnabled="true" IsSmall="false" IsBig="true" IsToggled="false" name="svelplus" />
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="S VEL\n-" IsBig="true" IsEnabled="true" name="svelminus" />
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="SURF" IsBig="true" IsEnabled="true" IsToggled="true" name="surf" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="SURF" IsBig="true" IsEnabled="true" name="surf" />
                     </ui:VisualElement>
                     <ui:VisualElement name="row-2" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 25%; width: 100%; align-items: center;">
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="H VEL\n+" IsBig="true" IsEnabled="true" name="hvelplus" />
@@ -31,28 +31,28 @@
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="UP" IsBig="true" IsEnabled="true" name="up" />
                     </ui:VisualElement>
                 </ui:VisualElement>
-                <ui:VisualElement name="tgt-container" style="flex-grow: 1; display: flex;">
+                <ui:VisualElement name="tgt-container" style="flex-grow: 1; display: none;">
                     <ui:VisualElement name="row-1" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 20%; width: 100%; align-items: center; margin-top: 5px;">
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="1" IsEnabled="true" IsSmall="false" IsBig="true" IsToggled="false" />
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="2" IsBig="true" IsEnabled="true" />
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="3" IsBig="true" IsEnabled="true" IsToggled="true" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="TGT\n+" IsEnabled="true" IsSmall="false" IsBig="true" IsToggled="false" name="tgtplus" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="RVEL\n+" IsBig="true" IsEnabled="true" name="rvelplus" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="PAR\n+" IsBig="true" IsEnabled="true" name="parplus" />
                     </ui:VisualElement>
                     <ui:VisualElement name="row-2" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 25%; width: 100%; align-items: center;">
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="4" IsBig="true" IsEnabled="true" />
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="5" IsBig="true" IsEnabled="true" />
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="6" IsBig="true" IsEnabled="true" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="TGT\n-" IsBig="true" IsEnabled="true" name="tgtminus" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="RVEL\n-" IsBig="true" IsEnabled="true" name="rvelminus" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="PAR\n-" IsBig="true" IsEnabled="true" name="parminus" />
                     </ui:VisualElement>
                 </ui:VisualElement>
                 <ui:VisualElement name="spec-container" style="flex-grow: 1; display: none;">
                     <ui:VisualElement name="row-1" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 20%; width: 100%; align-items: center; margin-top: 5px;">
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="1" IsEnabled="true" IsSmall="false" IsBig="true" IsToggled="false" />
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="2" IsBig="true" IsEnabled="true" />
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="3" IsBig="true" IsEnabled="true" IsToggled="true" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="STAR\n+" IsEnabled="true" IsSmall="false" IsBig="true" IsToggled="false" style="visibility: hidden;" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="2" IsBig="true" IsEnabled="true" style="visibility: hidden;" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="STAR\n+" IsBig="true" IsEnabled="true" name="starplus" />
                     </ui:VisualElement>
                     <ui:VisualElement name="row-2" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 25%; width: 100%; align-items: center;">
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="4" IsBig="true" IsEnabled="true" />
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="5" IsBig="true" IsEnabled="true" />
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="6" IsBig="true" IsEnabled="true" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="STAR\n-" IsBig="true" IsEnabled="true" style="visibility: hidden;" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="5" IsBig="true" IsEnabled="true" style="visibility: hidden;" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="STAR\n-" IsBig="true" IsEnabled="true" name="starminus" />
                     </ui:VisualElement>
                 </ui:VisualElement>
                 <ui:VisualElement name="attitude-controls" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 50%; padding-top: 0; padding-bottom: 5px; width: 100%; padding-left: 0; padding-right: 0; align-items: center;">
