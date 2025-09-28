@@ -1,3 +1,4 @@
+using AwesomeTechnologies.Utility;
 using BepInEx;
 using BepInEx.Logging;
 using JetBrains.Annotations;
@@ -5,6 +6,7 @@ using KSP.Game;
 using KSP.Game.Missions.Definitions;
 using KSP.Sim;
 using KSP.VolumeCloud;
+using SASExtended.Managers;
 using SASExtended.UI;
 using SpaceWarp;
 using SpaceWarp.API.Assets;
@@ -50,12 +52,6 @@ public class SASExtendedPlugin : BaseSpaceWarpPlugin
         // Load all the other assemblies used by this mod
         LoadAssemblies();
 
-        
-
-        
-
-        
-
         Appbar.RegisterAppButton(
             ModName,
             ToolbarFlightButtonID,
@@ -87,6 +83,14 @@ public class SASExtendedPlugin : BaseSpaceWarpPlugin
 
         _logger.LogInfo("Initialization is about to begin");
         DebugUI.Instance.InitializeStyles();
+
+        //SASManager.Instance.Initialize();
+
+        SceneController.Instance.ToggleUI(true);
+
+        var providers = new GameObject("SASExtended_Providers");
+        providers.transform.parent = this.transform;
+        providers.AddComponent<SASManager>();
     }
 
     /// <summary>

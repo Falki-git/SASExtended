@@ -1,4 +1,5 @@
 using KSP.UI.Binding;
+using SASExtended.Managers;
 using SASExtended.UI.Controls;
 using SASExtended.Unity.Runtime;
 using UitkForKsp2.API;
@@ -15,11 +16,7 @@ public class MainWindowController : MonoBehaviour
     // The UIDocument component of the window game object
     private UIDocument _window;
 
-    // The elements of the window that we need to access
     private VisualElement _root;
-    private TextField _nameTextfield;
-    private Toggle _noonToggle;
-    private Label _greetingLabel;
 
     // The backing field for the IsWindowOpen property
     private bool _isWindowOpen;
@@ -27,6 +24,11 @@ public class MainWindowController : MonoBehaviour
     private SideToggleControl _offToggle;
     private SideToggleControl _killrotToggle;
     private SideToggleControl _nodeToggle;
+
+    private VisualElement _orbitContainer;
+    private VisualElement _surfaceContainer;
+    private VisualElement _targetContainer;
+    private VisualElement _specialContainer;
 
     private TabToggleControl _orbitTabToggle;
     private TabToggleControl _surfaceTabToggle;
@@ -36,8 +38,8 @@ public class MainWindowController : MonoBehaviour
     private SideToggleControl _progradeToggle;
     private SideToggleControl _normalToggle;
     private SideToggleControl _radialInToggle;
-    private SideToggleControl _retrogradeToggle;    
-    private SideToggleControl _antinormalToggle;    
+    private SideToggleControl _retrogradeToggle;
+    private SideToggleControl _antinormalToggle;
     private SideToggleControl _radialOutToggle;
 
     private SideToggleControl _svelPlusToggle;
@@ -57,10 +59,24 @@ public class MainWindowController : MonoBehaviour
     private SideToggleControl _starPlusToggle;
     private SideToggleControl _starMinusToggle;
 
-    private VisualElement _orbitContainer;
-    private VisualElement _surfaceContainer;
-    private VisualElement _targetContainer;
-    private VisualElement _specialContainer;
+    private SideToggleControl _xToggle;
+    private FloatField _xValue;
+    private Button _xMinus;
+    private Button _xPlus;
+    private Button _xFirstSpecialButton;
+    private Button _xSecondSpecialButton;
+    private SideToggleControl _yToggle;
+    private FloatField _yValue;
+    private Button _yMinus;
+    private Button _yPlus;
+    private Button _yFirstSpecialButton;
+    private Button _ySecondSpecialButton;
+    private SideToggleControl _zToggle;
+    private FloatField _zValue;
+    private Button _zMinus;
+    private Button _zPlus;
+    private Button _zFirstSpecialButton;
+    private Button _zSecondSpecialButton;
 
 
     /// <summary>
@@ -107,8 +123,17 @@ public class MainWindowController : MonoBehaviour
         _root.CenterByDefault();
 
         _offToggle = _root.Q<SideToggleControl>("off");
+        _offToggle.SetEnabled(true);
+        _offToggle.SwitchToggleState(false, false);
+        _offToggle.RegisterCallback<ClickEvent>(OnOffClicked);
         _killrotToggle = _root.Q<SideToggleControl>("killrot");
+        _killrotToggle.SetEnabled(true);
+        _killrotToggle.SwitchToggleState(false, false);
+        _killrotToggle.RegisterCallback<ClickEvent>(OnKillrotClicked);
         _nodeToggle = _root.Q<SideToggleControl>("node");
+        _nodeToggle.SetEnabled(true);
+        _nodeToggle.SwitchToggleState(false, false);
+        _nodeToggle.RegisterCallback<ClickEvent>(OnNodeClicked);
 
         _orbitTabToggle = _root.Q<TabToggleControl>("orb-tab");
         _orbitTabToggle.RegisterCallback<ClickEvent>(OnOrbitTabClicked);
@@ -152,25 +177,6 @@ public class MainWindowController : MonoBehaviour
 
         _starPlusToggle = _root.Q<SideToggleControl>("starplus");
         _starMinusToggle = _root.Q<SideToggleControl>("starminus");
-
-        _offToggle.SetEnabled(true);
-        _offToggle.SwitchToggleState(false, false);
-        _offToggle.RegisterCallback<ClickEvent>(OnOffClicked);
-        _killrotToggle.SetEnabled(true);
-        _killrotToggle.SwitchToggleState(false, false);
-        _killrotToggle.RegisterCallback<ClickEvent>(OnKillrotClicked);
-        _nodeToggle.SetEnabled(true);
-        _nodeToggle.SwitchToggleState(false, false);
-        _nodeToggle.RegisterCallback<ClickEvent>(OnNodeClicked);
-
-
-
-        // Get the text field from the window
-        _nameTextfield = _root.Q<TextField>("name-textfield");
-        // Get the toggle from the window
-        _noonToggle = _root.Q<Toggle>("noon-toggle");
-        // Get the greeting label from the window
-        _greetingLabel = _root.Q<Label>("greeting-label");
         
 
         // Get the close button from the window
@@ -196,12 +202,12 @@ public class MainWindowController : MonoBehaviour
             _antinormalToggle.SwitchToggleState(false, false);
             _radialOutToggle.SwitchToggleState(false, false);
 
-            // TODO activate SAS and set to prograde
+            SASManager.Instance.SetOrbitPrograde();
         }
         else
         {
             _offToggle.SwitchToggleState(true, false);
-            // TODO deactivate SAS
+            SASManager.Instance.SetSASOff();
         }
     }
 
@@ -225,7 +231,7 @@ public class MainWindowController : MonoBehaviour
         else
         {
             _offToggle.SwitchToggleState(true, false);
-            // TODO deactivate SAS
+            SASManager.Instance.SetSASOff();
         }
     }
     private void OnRadialInClicked(ClickEvent evt)
@@ -248,7 +254,7 @@ public class MainWindowController : MonoBehaviour
         else
         {
             _offToggle.SwitchToggleState(true, false);
-            // TODO deactivate SAS
+            SASManager.Instance.SetSASOff();
         }
     }
 
@@ -272,7 +278,7 @@ public class MainWindowController : MonoBehaviour
         else
         {
             _offToggle.SwitchToggleState(true, false);
-            // TODO deactivate SAS
+            SASManager.Instance.SetSASOff();
         }
     }
 
@@ -296,7 +302,7 @@ public class MainWindowController : MonoBehaviour
         else
         {
             _offToggle.SwitchToggleState(true, false);
-            // TODO deactivate SAS
+            SASManager.Instance.SetSASOff();
         }
     }
 
@@ -320,7 +326,7 @@ public class MainWindowController : MonoBehaviour
         else
         {
             _offToggle.SwitchToggleState(true, false);
-            // TODO deactivate SAS
+            SASManager.Instance.SetSASOff();
         }
     }
 
@@ -396,10 +402,10 @@ public class MainWindowController : MonoBehaviour
         }
         else
         {
-            _offToggle.SwitchToggleState(true, false);        
+            _offToggle.SwitchToggleState(true, false);            
         }
 
-        // TODO deactivate SAS
+        SASManager.Instance.SetSASOff();
     }
 
     private void OnKillrotClicked(ClickEvent evt)
@@ -416,11 +422,14 @@ public class MainWindowController : MonoBehaviour
             _retrogradeToggle.SwitchToggleState(false, false);
             _antinormalToggle.SwitchToggleState(false, false);
             _radialOutToggle.SwitchToggleState(false, false);
+
+            SASManager.Instance.SetSASKillrot();
         }
         else
         {
             _offToggle.SwitchToggleState(true, false);
-            // TODO deactivate SAS
+            SASManager.Instance.SetSASOff();
+            
         }
     }
 
@@ -438,11 +447,13 @@ public class MainWindowController : MonoBehaviour
             _retrogradeToggle.SwitchToggleState(false, false);
             _antinormalToggle.SwitchToggleState(false, false);
             _radialOutToggle.SwitchToggleState(false, false);
+
+            SASManager.Instance.SetSASManeuver();
         }
         else
         {
             _offToggle.SwitchToggleState(true, false);
-            // TODO deactivate SAS
+            SASManager.Instance.SetSASOff();
         }
     }
 }

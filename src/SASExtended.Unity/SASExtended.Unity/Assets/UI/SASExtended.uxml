@@ -22,11 +22,11 @@
                 <ui:VisualElement name="surf-container" style="flex-grow: 1; display: none;">
                     <ui:VisualElement name="row-1" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 20%; width: 100%; align-items: center; margin-top: 5px;">
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="S VEL\n+" IsEnabled="true" IsSmall="false" IsBig="true" IsToggled="false" name="svelplus" />
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="S VEL\n-" IsBig="true" IsEnabled="true" name="svelminus" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="H VEL\n+" IsBig="true" IsEnabled="true" name="hvelplus" />
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="SURF" IsBig="true" IsEnabled="true" name="surf" />
                     </ui:VisualElement>
                     <ui:VisualElement name="row-2" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 25%; width: 100%; align-items: center;">
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="H VEL\n+" IsBig="true" IsEnabled="true" name="hvelplus" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="S VEL\n-" IsBig="true" IsEnabled="true" name="svelminus" />
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="H VEL\n-" IsBig="true" IsEnabled="true" name="hvelminus" />
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="UP" IsBig="true" IsEnabled="true" name="up" />
                     </ui:VisualElement>
@@ -34,12 +34,12 @@
                 <ui:VisualElement name="tgt-container" style="flex-grow: 1; display: none;">
                     <ui:VisualElement name="row-1" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 20%; width: 100%; align-items: center; margin-top: 5px;">
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="TGT\n+" IsEnabled="true" IsSmall="false" IsBig="true" IsToggled="false" name="tgtplus" />
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="RVEL\n+" IsBig="true" IsEnabled="true" name="rvelplus" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="R VEL\n+" IsBig="true" IsEnabled="true" name="rvelplus" />
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="PAR\n+" IsBig="true" IsEnabled="true" name="parplus" />
                     </ui:VisualElement>
                     <ui:VisualElement name="row-2" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); flex-direction: row; justify-content: space-around; height: 25%; width: 100%; align-items: center;">
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="TGT\n-" IsBig="true" IsEnabled="true" name="tgtminus" />
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="RVEL\n-" IsBig="true" IsEnabled="true" name="rvelminus" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="R VEL\n-" IsBig="true" IsEnabled="true" name="rvelminus" />
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="PAR\n-" IsBig="true" IsEnabled="true" name="parminus" />
                     </ui:VisualElement>
                 </ui:VisualElement>
@@ -57,31 +57,31 @@
                 </ui:VisualElement>
                 <ui:VisualElement name="attitude-controls" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 50%; padding-top: 0; padding-bottom: 5px; width: 100%; padding-left: 0; padding-right: 0; align-items: center;">
                     <ui:VisualElement name="heading-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 30%; flex-direction: row; -unity-text-align: middle-left; padding-top: 2px; padding-bottom: 2px; align-items: center; width: 100%; justify-content: space-around; padding-right: 2px; padding-left: 2px;">
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="Heading" IsSmall="true" IsEnabled="true" IsToggled="true" />
-                        <ui:FloatField value="360" class="attitude-input-field" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="Heading" IsSmall="true" IsEnabled="true" IsToggled="true" name="x-toggle" />
+                        <ui:FloatField value="360" name="x-value" class="attitude-input-field" />
                         <ui:Label tabindex="-1" text="°" display-tooltip-when-elided="true" style="font-size: 10px; padding-left: 0; padding-right: 0; padding-top: 0; padding-bottom: 0; width: 5px;" />
-                        <ui:Button text="-" display-tooltip-when-elided="true" class="attitude__button" />
-                        <ui:Button text="+" display-tooltip-when-elided="true" class="attitude__button" />
-                        <ui:Button text="0" display-tooltip-when-elided="true" class="attitude__button" />
-                        <ui:Button text="90" display-tooltip-when-elided="true" class="attitude__button" style="width: 20px;" />
+                        <ui:Button text="-" display-tooltip-when-elided="true" name="x-minus" class="attitude__button" />
+                        <ui:Button text="+" display-tooltip-when-elided="true" name="x-plus" class="attitude__button" />
+                        <ui:Button text="0" display-tooltip-when-elided="true" name="x-first" class="attitude__button" />
+                        <ui:Button text="90" display-tooltip-when-elided="true" name="x-second" class="attitude__button" style="width: 20px;" />
                     </ui:VisualElement>
                     <ui:VisualElement name="pitch-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 30%; flex-direction: row; -unity-text-align: middle-left; padding-bottom: 2px; padding-top: 2px; align-items: center; width: 100%; padding-left: 2px; padding-right: 2px; justify-content: space-around;">
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="Pitch" IsSmall="true" IsToggled="true" IsEnabled="true" />
-                        <ui:FloatField value="42.2" class="attitude-input-field" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="Pitch" IsSmall="true" IsToggled="true" IsEnabled="true" name="y-toggle" />
+                        <ui:FloatField value="42.2" name="y-value" class="attitude-input-field" />
                         <ui:Label tabindex="-1" text="°" display-tooltip-when-elided="true" style="font-size: 10px; padding-left: 0; padding-right: 0; padding-top: 0; padding-bottom: 0; width: 5px;" />
-                        <ui:Button text="-" display-tooltip-when-elided="true" class="attitude__button" />
-                        <ui:Button text="+" display-tooltip-when-elided="true" class="attitude__button" />
-                        <ui:Button text="0" display-tooltip-when-elided="true" class="attitude__button" />
-                        <ui:Button text="90" display-tooltip-when-elided="true" class="attitude__button" style="width: 20px;" />
+                        <ui:Button text="-" display-tooltip-when-elided="true" name="y-minus" class="attitude__button" />
+                        <ui:Button text="+" display-tooltip-when-elided="true" name="y-plus" class="attitude__button" />
+                        <ui:Button text="0" display-tooltip-when-elided="true" name="y-first" class="attitude__button" />
+                        <ui:Button text="90" display-tooltip-when-elided="true" name="z-second" class="attitude__button" style="width: 20px;" />
                     </ui:VisualElement>
                     <ui:VisualElement name="roll-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 30%; flex-direction: row; -unity-text-align: middle-left; padding-top: 2px; padding-bottom: 2px; align-items: center; width: 100%; padding-left: 2px; padding-right: 2px; justify-content: space-around;">
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="Roll" IsSmall="true" IsEnabled="true" IsToggled="true" />
-                        <ui:FloatField value="42.2" class="attitude-input-field" />
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="Roll" IsSmall="true" IsEnabled="true" IsToggled="true" name="z-toggle" />
+                        <ui:FloatField value="42.2" name="z-value" class="attitude-input-field" />
                         <ui:Label tabindex="-1" text="°" display-tooltip-when-elided="true" style="font-size: 10px; padding-left: 0; padding-right: 0; padding-top: 0; padding-bottom: 0; width: 5px;" />
-                        <ui:Button text="-" display-tooltip-when-elided="true" class="attitude__button" />
-                        <ui:Button text="+" display-tooltip-when-elided="true" class="attitude__button" />
-                        <ui:Button text="0" display-tooltip-when-elided="true" class="attitude__button" />
-                        <ui:Button text="180" display-tooltip-when-elided="true" class="attitude__button" style="width: 20px;" />
+                        <ui:Button text="-" display-tooltip-when-elided="true" name="z-minus" class="attitude__button" />
+                        <ui:Button text="+" display-tooltip-when-elided="true" name="z-plus" class="attitude__button" />
+                        <ui:Button text="0" display-tooltip-when-elided="true" name="z-first" class="attitude__button" />
+                        <ui:Button text="180" display-tooltip-when-elided="true" name="z-second" class="attitude__button" style="width: 20px;" />
                     </ui:VisualElement>
                 </ui:VisualElement>
             </ui:VisualElement>

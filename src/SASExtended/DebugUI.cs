@@ -6,6 +6,7 @@ using KSP.Iteration.UI.Binding;
 using KSP.Sim;
 using KSP.Sim.impl;
 using SASExtended;
+using SASExtended.Managers;
 using SpaceWarp.API.Game.Extensions;
 using SpaceWarp.API.Game.Waypoints;
 using SpaceWarp.API.UI;
@@ -19,7 +20,7 @@ using static UnityEngine.GraphicsBuffer;
 
 namespace SASExtended
 {
-    internal class DebugUI
+    public class DebugUI
     {
         public bool IsDebugWindowOpen;
 
@@ -42,7 +43,7 @@ namespace SASExtended
 
         public static double UT => GameManager.Instance.Game?.UniverseModel?.UniverseTime ?? 0;
         double _lastRefreshTime = 0;
-        double _refreshInterval = 0.1; // seconds
+        public double RefreshInterval = 0.1; // seconds
 
         private bool _isAutopilotActive = false;
         private Rotation _rotation;
@@ -116,7 +117,7 @@ namespace SASExtended
 
             
 
-            if (_isAutopilotActive && (UT - _lastRefreshTime > _refreshInterval))
+            if (_isAutopilotActive && (UT - _lastRefreshTime > RefreshInterval))
             {
                 var vessel = GameManager.Instance?.Game?.ViewController?.GetActiveSimVessel();
 
@@ -188,17 +189,37 @@ namespace SASExtended
 
             GUILayout.BeginHorizontal();
             {
+                GUILayout.Label($"---", GUILayout.Width(200));
+
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            {
+                GUILayout.Label($"X: {SASManager.Instance.X:F2}, Y: {SASManager.Instance.Y:F2}, Z: {SASManager.Instance.Z:F2}", GUILayout.Width(250));
+                GUILayout.Label($"Xe: {SASManager.Instance.XEnabled}, Ye: {SASManager.Instance.YEnabled}, Ze: {SASManager.Instance.ZEnabled}", GUILayout.Width(250));
+                GUILayout.Label($"Mode: {SASManager.Instance.AttitudeMode}", GUILayout.Width(200));
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            {
+                GUILayout.Label($"---", GUILayout.Width(200));
+
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            {
                 //GUILayout.Label($"Refresh interval (s): {_refreshInterval:F2}");
                 GUILayout.Label($"Refresh interval (s): ", GUILayout.Width(200));
-                string intervalText = GUILayout.TextField(_refreshInterval.ToString("F2"), GUILayout.Width(50));
+                string intervalText = GUILayout.TextField(RefreshInterval.ToString("F2"), GUILayout.Width(50));
 
                 if (float.TryParse(intervalText, out float parsedValue))
                 {
-                    _refreshInterval = Mathf.Clamp(parsedValue, 0, 1);
+                    RefreshInterval = Mathf.Clamp(parsedValue, 0, 1);
                 }
 
                 //_refreshInterval = GUILayout.HorizontalSlider((float)_refreshInterval, 0, 1, GUILayout.Width(100));
-                _refreshInterval = GUILayout.HorizontalSlider((float)_refreshInterval, 0, 1, GUILayout.ExpandWidth(true));
+                RefreshInterval = GUILayout.HorizontalSlider((float)RefreshInterval, 0, 1, GUILayout.ExpandWidth(true));
             }
             GUILayout.EndHorizontal();
 
@@ -601,7 +622,7 @@ namespace SASExtended
 
         private void WorksForSurfacePrograde()
         {
-            if (_isAutopilotActive && (UT - _lastRefreshTime > _refreshInterval))
+            if (_isAutopilotActive && (UT - _lastRefreshTime > RefreshInterval))
             {
                 var vessel = GameManager.Instance?.Game?.ViewController?.GetActiveSimVessel();
 
