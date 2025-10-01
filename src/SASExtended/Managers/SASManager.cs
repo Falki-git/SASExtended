@@ -18,6 +18,13 @@ public class SASManager : MonoBehaviour
     public bool XEnabled = true, YEnabled = true, ZEnabled = true;
     public AttitudeMode AttitudeMode = AttitudeMode.None;
 
+    public double RefreshInterval = 0;
+    public double RefreshInterval_short = 0.02;
+    public double RefreshInterval_mid = 0.05;
+    public double RefreshInterval_long = 0.08;
+    public double AngleToRotation_small = 10;
+    public double AngleToRotation_large = 30;
+
     private static readonly ManualLogSource _LOGGER = BepInEx.Logging.Logger.CreateLogSource("SASExtended.SASManager");
     private static double _UT => GameManager.Instance.Game?.UniverseModel?.UniverseTime ?? 0;
     private double _lastRefreshTime = 0;
@@ -32,39 +39,42 @@ public class SASManager : MonoBehaviour
 
     private void Update()
     {
-        if (AttitudeMode != AttitudeMode.None && (_UT - _lastRefreshTime > DebugUI.Instance.RefreshInterval))
+        if (AttitudeMode != AttitudeMode.None && (_UT - _lastRefreshTime > RefreshInterval /*DebugUI.Instance.RefreshInterval*/))
         {
             SetRotation();
-            
             _vessel.Autopilot.SAS.LockRotation(_rotation);
             _lastRefreshTime = _UT;
+
+            SetRefreshInterval();
         }
     }
 
     public void SetRotation()
     {
-        var vessel = GameManager.Instance?.Game?.ViewController?.GetActiveSimVessel();
-
         //double x, y, z;
         //if (!double.TryParse(_x, out x) || !double.TryParse(_y, out y) || !double.TryParse(_z, out z))
         //    return;
 
-        var orbitPrograde = Vector.normalize(vessel._telemetryComponent.OrbitalMovementVelocity);
+        var orbitPrograde = Vector.normalize(_vessel._telemetryComponent.OrbitalMovementVelocity);
         var orbitRetrograde = Vector.negate(orbitPrograde);
-        var horizon = vessel._telemetryComponent.HorizonNorth;
-        var surfacePrograde = Vector.normalize(vessel._telemetryComponent.SurfaceMovementPrograde);
+        var horizon = _vessel._telemetryComponent.HorizonNorth;
+        var surfacePrograde = Vector.normalize(_vessel._telemetryComponent.SurfaceMovementPrograde);
         var surfaceRetrograde = Vector.negate(surfacePrograde);
-        var target = Vector.normalize(vessel._telemetryComponent.TargetDirection);
+        var target = Vector.normalize(_vessel._telemetryComponent.TargetDirection);
         var antiTarget = Vector.negate(target);
+        
+        var maneuver = Vector.normalize(_vessel._telemetryComponent.ManeuverDirection);
 
+        //var currentAttitude = _vessel.transform.coordinateSystem.ToLocalVector(_vessel.MOI.coordinateSystem.up).normalized;
+        //var angle = Vector3d.Angle(orbitPrograde.vector, vessel.transform.coordinateSystem.ToLocalVector(vessel.MOI.coordinateSystem.up).normalized);
         //var sun = vessel._telemetryComponent.SOIFrameBody.transform.parent.forward;
-
-        var sunBody = GetParentStar(vessel);
-        var sun = Vector.normalize(Position.Delta(sunBody.Position, vessel._telemetryComponent.RootPosition));
+        
+        var sunBody = GetParentStar(_vessel);
+        var sun = Vector.normalize(Position.Delta(sunBody.Position, _vessel._telemetryComponent.RootPosition));
         var antiSun = Vector.negate(sun);
 
 
-        var upwards = Vector.normalize(Position.Delta(vessel._telemetryComponent.RootPosition, vessel._telemetryComponent.SOIPosition));
+        var upwards = Vector.normalize(Position.Delta(_vessel._telemetryComponent.RootPosition, _vessel._telemetryComponent.SOIPosition));
 
         switch (AttitudeMode)
         {
@@ -110,7 +120,7 @@ public class SASManager : MonoBehaviour
                 _rotation.localRotation = _rotation.localRotation * QuaternionD.Euler(-Y, X, Z) * QuaternionD.Euler(90, 0, 0);
                 break;
         }
-    }
+    }    
 
     public void SetSASOff()
     {
@@ -156,6 +166,24 @@ public class SASManager : MonoBehaviour
         }
 
         return body;
+    }
+
+    private double GetAngleToRotation()
+    {
+        var currentAttitude = _vessel.transform.coordinateSystem.ToLocalVector(_vessel.MOI.coordinateSystem.up).normalized;
+        var currentRotation = _rotation.localRotation * Vector3d.up;
+        return Vector3d.Angle(currentAttitude, currentRotation);
+    }
+
+    private void SetRefreshInterval()
+    {
+        var angleToRotation = GetAngleToRotation();
+        if (angleToRotation > AngleToRotation_large)
+            RefreshInterval = RefreshInterval_short;
+        else if (angleToRotation > AngleToRotation_small)
+            RefreshInterval = RefreshInterval_mid;
+        else
+            RefreshInterval = RefreshInterval_long;
     }
 
 

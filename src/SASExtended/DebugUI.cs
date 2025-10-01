@@ -186,6 +186,8 @@ namespace SASExtended
         private void FillDebugUI(int _)
         {
             var vessel = GameManager.Instance?.Game?.ViewController?.GetActiveSimVessel();
+            var orbitPrograde = Vector.normalize(vessel._telemetryComponent.OrbitalMovementVelocity);
+            var angle = Vector3d.Angle(orbitPrograde.vector, vessel.transform.coordinateSystem.ToLocalVector(vessel.MOI.coordinateSystem.up).normalized);
 
             GUILayout.BeginHorizontal();
             {
@@ -195,9 +197,15 @@ namespace SASExtended
             GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();
             {
+
                 GUILayout.Label($"X: {SASManager.Instance.X:F2}, Y: {SASManager.Instance.Y:F2}, Z: {SASManager.Instance.Z:F2}", GUILayout.Width(250));
                 GUILayout.Label($"Xe: {SASManager.Instance.XEnabled}, Ye: {SASManager.Instance.YEnabled}, Ze: {SASManager.Instance.ZEnabled}", GUILayout.Width(250));
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            {
                 GUILayout.Label($"Mode: {SASManager.Instance.AttitudeMode}", GUILayout.Width(200));
+                GUILayout.Label($"Angle to prograde: {angle:F2}", GUILayout.Width(200));
             }
             GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();
@@ -209,17 +217,75 @@ namespace SASExtended
 
             GUILayout.BeginHorizontal();
             {
-                //GUILayout.Label($"Refresh interval (s): {_refreshInterval:F2}");
-                GUILayout.Label($"Refresh interval (s): ", GUILayout.Width(200));
-                string intervalText = GUILayout.TextField(RefreshInterval.ToString("F2"), GUILayout.Width(50));
+                GUILayout.Label($"Refresh interval - long: ", GUILayout.Width(200));
+                string intervalText = GUILayout.TextField(SASManager.Instance.RefreshInterval_long.ToString("F2"), GUILayout.Width(50));
 
                 if (float.TryParse(intervalText, out float parsedValue))
                 {
-                    RefreshInterval = Mathf.Clamp(parsedValue, 0, 1);
+                    SASManager.Instance.RefreshInterval_long = Mathf.Clamp(parsedValue, 0, 1);
                 }
+                SASManager.Instance.RefreshInterval_long = GUILayout.HorizontalSlider((float)SASManager.Instance.RefreshInterval_long, 0, 1, GUILayout.ExpandWidth(true));
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            {
+                GUILayout.Label($"Refresh interval - mid: ", GUILayout.Width(200));
+                string intervalText = GUILayout.TextField(SASManager.Instance.RefreshInterval_mid.ToString("F2"), GUILayout.Width(50));
 
-                //_refreshInterval = GUILayout.HorizontalSlider((float)_refreshInterval, 0, 1, GUILayout.Width(100));
-                RefreshInterval = GUILayout.HorizontalSlider((float)RefreshInterval, 0, 1, GUILayout.ExpandWidth(true));
+                if (float.TryParse(intervalText, out float parsedValue))
+                {
+                    SASManager.Instance.RefreshInterval_mid = Mathf.Clamp(parsedValue, 0, 1);
+                }
+                SASManager.Instance.RefreshInterval_mid = GUILayout.HorizontalSlider((float)SASManager.Instance.RefreshInterval_mid, 0, 1, GUILayout.ExpandWidth(true));
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            {
+                GUILayout.Label($"Refresh interval - short: ", GUILayout.Width(200));
+                string intervalText = GUILayout.TextField(SASManager.Instance.RefreshInterval_short.ToString("F2"), GUILayout.Width(50));
+
+                if (float.TryParse(intervalText, out float parsedValue))
+                {
+                    SASManager.Instance.RefreshInterval_short = Mathf.Clamp(parsedValue, 0, 1);
+                }
+                SASManager.Instance.RefreshInterval_short = GUILayout.HorizontalSlider((float)SASManager.Instance.RefreshInterval_short, 0, 1, GUILayout.ExpandWidth(true));
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            {
+                GUILayout.Label($"Refresh interval - current: {SASManager.Instance.RefreshInterval:F2}", GUILayout.Width(400));
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            {
+                GUILayout.Label($"Angle to Rotation - large: ", GUILayout.Width(250));
+                string intervalText = GUILayout.TextField(SASManager.Instance.AngleToRotation_large.ToString("F1"), GUILayout.Width(50));
+
+                if (float.TryParse(intervalText, out float parsedValue))
+                {
+                    SASManager.Instance.AngleToRotation_large = Mathf.Clamp(parsedValue, 0, 180);
+                }
+                SASManager.Instance.AngleToRotation_large = GUILayout.HorizontalSlider((float)SASManager.Instance.AngleToRotation_large, 0, 1, GUILayout.ExpandWidth(true));
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            {
+                GUILayout.Label($"Angle to Rotation - small: ", GUILayout.Width(250));
+                string intervalText = GUILayout.TextField(SASManager.Instance.AngleToRotation_small.ToString("F1"), GUILayout.Width(50));
+
+                if (float.TryParse(intervalText, out float parsedValue))
+                {
+                    SASManager.Instance.AngleToRotation_small = Mathf.Clamp(parsedValue, 0, 180);
+                }
+                SASManager.Instance.AngleToRotation_small = GUILayout.HorizontalSlider((float)SASManager.Instance.AngleToRotation_small, 0, 1, GUILayout.ExpandWidth(true));
+            }
+            GUILayout.EndHorizontal();
+
+
+            GUILayout.BeginHorizontal();
+            {
+                GUILayout.Label($"---", GUILayout.Width(200));
+
             }
             GUILayout.EndHorizontal();
 
