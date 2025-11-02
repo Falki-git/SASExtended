@@ -226,7 +226,7 @@ public class MainWindowController : MonoBehaviour
             _antinormalToggle.SwitchToggleState(false, false);
             _radialOutToggle.SwitchToggleState(false, false);
 
-            // TODO activate SAS and set to normal
+            SASManager.Instance.SetOrbitNormal();
         }
         else
         {
@@ -249,7 +249,7 @@ public class MainWindowController : MonoBehaviour
             _antinormalToggle.SwitchToggleState(false, false);
             _radialOutToggle.SwitchToggleState(false, false);
 
-            // TODO activate SAS and set to radial in
+            SASManager.Instance.SetOrbitRadialIn();
         }
         else
         {
@@ -273,7 +273,7 @@ public class MainWindowController : MonoBehaviour
             _antinormalToggle.SwitchToggleState(false, false);
             _radialOutToggle.SwitchToggleState(false, false);
 
-            // TODO activate SAS and set to retrograde
+            SASManager.Instance.SetOrbitRetrograde();
         }
         else
         {
@@ -297,7 +297,7 @@ public class MainWindowController : MonoBehaviour
             //_antinormalToggle.SwitchToggleState(false, false);
             _radialOutToggle.SwitchToggleState(false, false);
 
-            // TODO activate SAS and set to antionormal
+            SASManager.Instance.SetOrbitAntiNormal();
         }
         else
         {
@@ -321,7 +321,7 @@ public class MainWindowController : MonoBehaviour
             _antinormalToggle.SwitchToggleState(false, false);
             //_radialOutToggle.SwitchToggleState(false, false);
 
-            // TODO activate SAS and set to radialout
+            SASManager.Instance.SetOrbitRadialOut();
         }
         else
         {

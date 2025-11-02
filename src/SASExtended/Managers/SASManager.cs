@@ -57,12 +57,18 @@ public class SASManager : MonoBehaviour
 
         var orbitPrograde = Vector.normalize(_vessel._telemetryComponent.OrbitalMovementVelocity);
         var orbitRetrograde = Vector.negate(orbitPrograde);
+        var orbitNormal = _vessel._telemetryComponent.OrbitMovementNormal;
+        var orbitAntiNormal = Vector.negate(orbitNormal);
+        var orbitRadialIn = _vessel._telemetryComponent.OrbitMovementRadialIn;
+        var orbitRadialOut = Vector.negate(orbitRadialIn);
+
         var horizon = _vessel._telemetryComponent.HorizonNorth;
         var surfacePrograde = Vector.normalize(_vessel._telemetryComponent.SurfaceMovementPrograde);
         var surfaceRetrograde = Vector.negate(surfacePrograde);
         var target = Vector.normalize(_vessel._telemetryComponent.TargetDirection);
         var antiTarget = Vector.negate(target);
         
+
         var maneuver = Vector.normalize(_vessel._telemetryComponent.ManeuverDirection);
 
         //var currentAttitude = _vessel.transform.coordinateSystem.ToLocalVector(_vessel.MOI.coordinateSystem.up).normalized;
@@ -86,6 +92,24 @@ public class SASManager : MonoBehaviour
                 _rotation = Rotation.LookRotation(orbitRetrograde, upwards);
                 _rotation.localRotation = _rotation.localRotation * QuaternionD.Euler(-Y, X, Z) * QuaternionD.Euler(90, 0, 0);
                 break;
+            case AttitudeMode.OrbitNormal:
+                _rotation = Rotation.LookRotation(orbitNormal, upwards);
+                _rotation.localRotation = _rotation.localRotation * QuaternionD.Euler(-Y, X, Z) * QuaternionD.Euler(90, 0, 0);
+                break;
+            case AttitudeMode.OrbitAntiNormal:
+                _rotation = Rotation.LookRotation(orbitAntiNormal, upwards);
+                _rotation.localRotation = _rotation.localRotation * QuaternionD.Euler(-Y, X, Z) * QuaternionD.Euler(90, 0, 0);
+                break;
+            case AttitudeMode.OrbitRadialIn:
+                _rotation = Rotation.LookRotation(orbitRadialIn, upwards);
+                _rotation.localRotation = _rotation.localRotation * QuaternionD.Euler(-Y, X, Z) * QuaternionD.Euler(90, 0, 0);
+                break;
+            case AttitudeMode.OrbitRadialOut:
+                _rotation = Rotation.LookRotation(orbitRadialOut, upwards);
+                _rotation.localRotation = _rotation.localRotation * QuaternionD.Euler(-Y, X, Z) * QuaternionD.Euler(90, 0, 0);
+                break;
+
+
             case AttitudeMode.SurfaceSurf:
                 _rotation = Rotation.LookRotation(horizon, upwards);
                 _rotation.localRotation = _rotation.localRotation * QuaternionD.Euler(-Y, X, Z) * QuaternionD.Euler(90, 0, 0);
@@ -146,6 +170,38 @@ public class SASManager : MonoBehaviour
     {
         AttitudeMode = AttitudeMode.OrbitPrograde;
 
+        _vessel.Autopilot.SetActive(true);
+    }
+    public void SetOrbitRetrograde()
+    {
+        AttitudeMode = AttitudeMode.OrbitRetrograde;
+
+        _vessel.Autopilot.SetActive(true);
+    }
+
+    public void SetOrbitNormal()
+    {
+        AttitudeMode = AttitudeMode.OrbitNormal;
+
+        _vessel.Autopilot.SetActive(true);
+    }
+    public void SetOrbitAntiNormal()
+    {
+        AttitudeMode = AttitudeMode.OrbitAntiNormal;
+        
+        _vessel.Autopilot.SetActive(true);
+    }
+    public void SetOrbitRadialIn()
+    {
+        AttitudeMode = AttitudeMode.OrbitRadialIn;
+        
+        _vessel.Autopilot.SetActive(true);
+    }
+
+    public void SetOrbitRadialOut()
+    {
+        AttitudeMode = AttitudeMode.OrbitRadialOut;
+        
         _vessel.Autopilot.SetActive(true);
     }
 
