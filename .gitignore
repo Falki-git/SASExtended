@@ -49,3 +49,6 @@ _UpgradeReport_Files/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+#KSP2 specific
+.dist/
