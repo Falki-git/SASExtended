@@ -144,6 +144,8 @@ public class SASManager : MonoBehaviour
                 _rotation.localRotation = _rotation.localRotation * QuaternionD.Euler(-Y, X, Z) * QuaternionD.Euler(90, 0, 0);
                 break;
         }
+
+        int test = 0;
     }    
 
     public void SetSASOff()
