@@ -4,9 +4,9 @@
   "author": "Falki",
   "name": "SAS Extended",
   "description": "SAS Extended",
-  "source": "todo",
+  "source": "https://github.com/Falki-git/SASExtended",
   "version": "0.0.1",
-  "version_check": "todo",
+  "version_check": "https://raw.githubusercontent.com/Falki-git/SASExtended/refs/heads/main/plugin_template/swinfo.json",
   "ksp2_version": {
     "min": "0.2.1",
     "max": "*"
