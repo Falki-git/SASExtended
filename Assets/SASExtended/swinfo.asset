@@ -1,0 +1,35 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9065a46703c44e8fabd263388eaeb6e7, type: 3}
+  m_Name: swinfo
+  m_EditorClassIdentifier: ksp2community.ksp2unitytools.editor::Ksp2UnityTools.Editor.Modding.Mod
+  id: SASExtended
+  name: SAS Extended
+  author: Falki
+  description: A sample mod for KSP2
+  version: 0.1.0
+  versionCheck: 
+  minKsp2Version: 0.2.8.3
+  maxKsp2Version: '*'
+  source: 
+  allGroup: {fileID: 11400000, guid: 811d6add6e3ceb34c8eeee1fba1f281c, type: 2}
+  partsGroup: {fileID: 11400000, guid: 300c82dc42a4beb4a9456f7686335ca5, type: 2}
+  missionsGroup: {fileID: 11400000, guid: 45470519bcea19640bf0c93ea31b7efa, type: 2}
+  celestialBodiesGroup: {fileID: 11400000, guid: ea03ed78c278e404595dc56fc18edee1, type: 2}
+  scienceExperimentGroup: {fileID: 11400000, guid: a5d84e4bd3bd8494594bf2a44d6c1490, type: 2}
+  techNodeDataGroup: {fileID: 11400000, guid: 58c809d6e55173c4b9435112917bead2, type: 2}
+  addressablesProfileId: 4ac87e65bc36ddb45bf477ac5372a5e3
+  dependencies:
+  - id: SpaceWarp2
+    min: 2.0.0
+    max: '*'
+  incompatibilities: []
