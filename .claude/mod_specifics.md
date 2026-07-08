@@ -129,14 +129,16 @@ A single flight window (UXML + USS), styled like the stock KSP2 panels. Layout, 
 (see the mock and the legacy `SASExtended.uxml`):
 
 - **Header:** title "SAS EXTENDED" + close button. Draggable window.
-- **Top row (3 global modes):** `OFF`, `KILL ROT` (kill rotation / StabilityAssist damping),
-  `NODE` (point at maneuver node — currently stubbed to a debug "Horizon" call in the prototype).
+- **Top row (3 global modes):** `OFF`, `KILL ROT` (implemented — captures whatever attitude the
+  vessel is at when engaged and holds it, mirroring vanilla `StabilityAssist`; doesn't point
+  anywhere), `NODE` (implemented — points at the maneuver node's burn vector
+  (`_telemetry.ManeuverDirection`); holds current attitude instead if no node is planned).
 - **Tabs:** `ORB` · `SURF` · `TGT` · `SPEC`. Selecting a tab shows that category's direction
   buttons. (MechJeb's equivalent row is OBT/SURF/TGT/ADV.)
   - **ORB:** Prograde, Retrograde, Normal+, Normal−, Radial+, Radial−.
   - **SURF:** S VEL+, S VEL−, SURF, H VEL+, H VEL−, UP.
   - **TGT:** TGT+, TGT−, R VEL+, R VEL−, PAR+, PAR−.
-  - **SPEC:** Star+, Star− (parent-star pointing; misc/experimental).
+  - **SPEC:** Star+, Star− (parent-star pointing; misc/experimental), plus **Hov** (hover).
 - **Offset rows (3):** `Heading`, `Pitch`, `Roll`. Each row = a per-axis enable toggle (green
   LED) + a numeric field (degrees) + `−` / `+` nudge buttons + two presets (`0`, and `90`/`90`/
   `180`). Roll's second preset is 180°.
@@ -150,26 +152,91 @@ exclusion is handled in the window controller).
 
 ### Per-axis offset toggle (Heading / Pitch / Roll LED) — semantics
 
-The green LED next to each axis is **context-dependent**:
+**Implemented** in `SASManager.BuildPointingRotation` / `GetCurrentOffsetAngles`, uniformly across
+every pointing mode (not just SURF as originally speculated below — no partial-axis
+`SetTargetOrientation` split turned out to be needed; a single `LockRotation` per tick handles it):
 
-- **Usual case — offset enable/disable:** toggle ON = apply the entered angle as an offset on
-  that axis; toggle OFF = offset treated as 0, axis holds the base direction. (Legacy has
-  `XEnabled/YEnabled/ZEnabled` fields intended for this but doesn't yet honor them in the math.)
-- **"Free axis" case:** for base modes that have **no inherent full orientation** — chiefly
-  **SURF** — the orientation is defined *entirely* by the enabled offsets. If the user enables
-  only Heading and Pitch and leaves Roll off, Roll is left **free** (the vessel keeps whatever
-  roll it naturally has) rather than forced to 0. This means SURF (and similar) cannot always use
-  a single full `LockRotation`; a freed axis needs partial-axis control (e.g. command only the
-  axes that are enabled). Design this carefully — it's the main subtlety separating SAS Extended
-  from a naive full-orientation lock.
+- **Toggle ON:** apply the entered angle (`X`/`Y`/`Z` = Heading/Pitch/Roll) as an offset on that
+  axis.
+- **Toggle OFF → axis is genuinely free, not forced to 0.** Each refresh, `GetCurrentOffsetAngles`
+  measures the vessel's *actual current* angle on that axis — solve
+  `currentRotation = look.localRotation * offset * Euler(90,0,0)` for `offset` (reframing the
+  vessel's `ControlTransform.Rotation` into the same coordinate system as `look` first), then
+  decompose `offset` via Unity's own `Quaternion.eulerAngles` (the exact inverse of
+  `Quaternion.Euler`, same convention used to build it: `Euler(-Pitch, Heading, Roll)`) — and
+  commands that measured value straight back. The autopilot's error on that axis is then ~zero, so
+  it applies ~no torque there and the vessel drifts freely (e.g. disabling Roll lets the vessel
+  roll however it wants while heading/pitch keep tracking the target — mirrors vanilla SAS's own
+  `SetTargetOrientation`, which likewise only constrains 2 DOF and leaves roll uncontrolled).
+- `Hover` only ever exposes **Roll** to this mechanism — heading/pitch are pinned to the thrust
+  direction there and aren't user-configurable.
+
+### Hover mode (SPEC → Hov) — throttle control
+
+Unlike every other mode (which only commands orientation via `LockRotation`), **Hover also drives the
+throttle**. It points the vessel thrust-axis up, tilted against horizontal surface velocity to null it,
+and modulates throttle to cancel vertical velocity and hold the engagement altitude
+(`AltitudeFromSurface`). The throttle law (`SASManager.UpdateHoverThrottle`) is a P + integral controller
+on vertical-speed error; the integral self-tunes to the vessel's hover throttle so **no per-vessel
+thrust/mass/TWR model is needed**. Gains are public tunables (`Hover*` fields on `SASManager`).
+
+### Hover mode — known bugs (found via `Player.log` analysis, not yet fixed)
+
+Diagnosed 2026-07-08 from real in-game `Player.log` captures (the log's path is in memory —
+[[external-sources]] — read it after any future in-game test instead of guessing). Both bugs are in
+the horizontal-velocity-cancellation path; the altitude/vertical-hold half of the throttle law
+(`UpdateHoverThrottle`) works correctly when tested from a proper near-hover engage (steady
+altitude within ~0.3m of target, throttle settling ~0.20, not saturated). **Deferred — to be
+tackled together with the planned rework below, not fixed as one-off patches.**
+
+1. **Throttle can starve all horizontal-correction authority.** `UpdateHoverThrottle`'s P+I law
+   zeroes throttle whenever actual vertical speed exceeds the target rate (correct in isolation —
+   you can't thrust to *increase* descent) but that also zeroes thrust entirely, so the Hover
+   attitude logic's tilt has literally no force to redirect. Reproduced by engaging Hover while
+   still climbing at ~80 m/s right after an ascent: `HoverThrottle` stayed pinned at `0.000` for the
+   whole session while `horizontalSpeed` grew from ~47 to ~300 m/s uncorrected (`[Hover/throttle]`
+   log: `actualVSpeed=83.35m/s ... throttlePreClamp=-4.909[SATURATED] HoverThrottle=0.000`). Not
+   representative of the intended landing/hover-descent use case, but a real edge case.
+2. **Horizontal-velocity cancellation oscillates instead of converging (confirmed even in a proper
+   near-hover retest).** Parsing a full session's `[Hover/attitude]` log lines (2191 samples)
+   shows `horizontalSpeed` swinging repeatedly between ~1 and ~24 m/s with a ~9–10s period, and —
+   more tellingly — the horizontal velocity *direction* rotates through a full circle each cycle
+   instead of shrinking toward zero (e.g. `horiz=(-12.0,11.2,-3.3)` → near-zero → `horiz=(-2.2,
+   -15.6,-0.5)` → peak → near-zero → `horiz=(15.1,13.0,4.0)`, repeating). `cappedTiltTangent` was
+   `SATURATED` at the 30° cap (`HoverMaxTilt`) in 2186/2191 samples — with the default
+   `HoverHorizontalGain=0.5`, anything above ~1.15 m/s horizontal speed pins tilt at max, so the
+   control is effectively bang-bang (always max-tilt toward instantaneous anti-velocity), not truly
+   proportional. Likely cause: pure-proportional, no-damping control reacting to the *current*
+   velocity combined with real attitude-slew lag — by the time the vessel's tilt catches up to a
+   commanded direction, the velocity has moved on, so the correction systematically overshoots past
+   zero into a new direction each cycle (a classic lagged-proportional-control limit cycle) rather
+   than actually killing the drift.
+
+**Planned direction (per the user, not yet scheduled):** Hover is getting a signed **target
+vertical velocity** input (replacing/extending pure altitude-hold) and a **toggle for whether to
+cancel horizontal velocity at all**. Fix both bugs above as part of that rework rather than as
+isolated patches — bug 1 in particular is a coordination problem between the throttle law and the
+tilt law that the redesign will touch anyway. See [[hover-roadmap]] for the fuller memory record.
+
+**Why a Harmony patch is required for throttle:** the stock `FlightInputHandler` keeps a persistent
+`_flightCtrlState.mainThrottle` and pushes it to the active vessel every FixedUpdate, so setting throttle
+from our `Update` loop (via `SetFlightControlState`) gets overwritten. Instead
+`Patches/FlightInputHandlerThrottlePatch` postfixes `FlightInputHandler.UpdateFlightControlState` and, while
+`AttitudeMode == Hover`, overwrites `mainThrottle` (Harmony field-injection param `____flightCtrlState`) —
+after player input is applied but before the autopilot pass and the push, so the hover throttle sticks.
+The plugin now calls `CreateHarmonyAndPatchAll()` in `OnInitialized`. (There is **no** stock throttle entry
+in `FlightCtrlStateInputOverride` — only yaw/pitch/roll/translate/wheel — which is why the patch is needed.)
+Throttle is left sticky on disengage (matches stock behaviour; forcing it to 0 could drop a climbing vessel).
+Engaging hover commands throttle but does not auto-stage — engines must already be activated.
 
 ## v1 scope
 
 **First working release = the ORB tab, fully functional** — the six orbital directions plus
-working Heading/Pitch/Roll offsets, engaged/disengaged via OFF, with SAS actually holding the
-computed orientation on a real vessel. SURF / TGT / SPEC and NODE (maneuver) are **roadmap**,
-documented above but not required for v1. (The legacy prototype is furthest along on exactly the
-ORB modes.)
+working Heading/Pitch/Roll offsets (including free-axis-when-disabled), engaged/disengaged via
+OFF, with SAS actually holding the computed orientation on a real vessel. **`KILL ROT` and `NODE`
+(maneuver) are now also implemented** (see the Offset math section below). SURF / TGT / SPEC
+direction buttons remain **roadmap**, not required for v1. (The legacy prototype is furthest along
+on exactly the ORB modes.)
 
 ## Porting from the legacy prototype
 
@@ -196,21 +263,60 @@ Unity-side assets (legacy `src/SASExtended.Unity/…/Assets/`):
 | `UI/SASExtended.uxml`, `UI/SASExtended.uss` | **Port 1:1 / verbatim.** The author spent significant time getting the visual design exact — do **not** restyle, re-lay-out, "clean up", or tweak markup/USS. Carry the UXML and USS across unchanged (only adjust asset *paths/GUIDs* as the new project structure strictly requires). Any visual change must be explicitly requested. |
 | `Runtime/SideToggleControl.cs`, `Runtime/TabToggleControl.cs` | Custom UI Toolkit controls (LED toggle button + tab button). Port — the UXML/controllers depend on them. In SW1.x they shipped in a separate `SASExtended.Unity.dll` registered via `CustomControls.RegisterFromAssembly`; **confirm the SpaceWarp2 mechanism for registering custom UITK controls** against the Redux docs before wiring these up. |
 
-## Offset math (design intent, not legacy-verbatim)
+## Offset math (final design — supersedes the legacy prototype's approach)
 
-Concept from the prototype's ORB modes, to be re-derived cleanly:
-1. Build a base orientation aligned to the local horizon: `Rotation.LookRotation(north, up)`, then
-   correct axes with a `QuaternionD.Euler(90,0,0)` so "up-of-vessel" maps correctly.
-2. Compute the base direction's **heading** and **pitch** on the horizon plane (signed angle vs.
-   north around up; `asin` of the dot with up), and rotate the base orientation to face it.
-3. Apply the user offsets in a fixed order — **Heading → Pitch → Roll** (order matters) — as
-   `QuaternionD.AngleAxis` rotations about the appropriate local axes.
-4. Feed the result to `SAS.LockRotation` each refresh. Use an **adaptive refresh interval**
-   (shorter when far from target, longer when close) to avoid jitter — the prototype's
-   `RefreshInterval_short/mid/long` keyed off `GetAngleToRotation()`.
+The legacy prototype's heading/pitch derivation — `Vector3d.SignedAngle` vs. north + `Math.Asin`
+vs. up, then rebuilding via a chain of local `QuaternionD.AngleAxis` rotations — was carried over
+**verbatim** during the initial port (byte-for-byte identical to the legacy prototype). It turned
+out to be **mathematically wrong** except very close to the gimbal-lock singularity (up to ~90° of
+pointing error elsewhere for orbital modes, confirmed via a standalone quaternion simulation, since
+Claude cannot drive the Unity editor to test in-engine). It has been replaced with the following
+(all in `SASManager.cs`):
 
-Validate against actual in-game behavior — the prototype has known-wrong cases (e.g. Star modes
-"doesn't work", NODE stubbed). Roll handling and the "free axis" SURF case need fresh design.
+1. `Rotation.LookRotation(target, upwards)` aligns local **up** (the vessel's nose axis, after the
+   trailing `Euler(90,0,0)` remap) exactly with `target`, for any target/upwards pair — zero error,
+   no gimbal-lock caveat. This is what `BuildPointingRotation` does for every ORB/SURF/TGT/SPEC
+   case (and `SurfaceUp`, which can't use `upwards` as its own up-hint since target and hint would
+   be parallel — it uses `north` as the hint instead).
+2. User offsets are applied as
+   `localRotation * QuaternionD.Euler(-Pitch, Heading, Roll) * QuaternionD.Euler(90,0,0)`.
+3. A disabled axis doesn't zero its offset — it's measured live off the vessel's current attitude
+   instead, so it's genuinely free rather than pinned to one value. See "Per-axis offset toggle"
+   above for the mechanism (`GetCurrentOffsetAngles`).
+4. `SetRotation()` calls `_telemetry.RefreshAutopilotTelemetry()` first (previously missing — the
+   game's own documented "call this before consuming telemetry" entry point for autopilot-style
+   readers, as opposed to the display-only per-frame telemetry cycle) and reframes every telemetry
+   direction vector into `HorizonNorth`'s coordinate system before use — mixing raw vectors across
+   coordinate systems un-reframed was the root cause of an earlier Normal/Radial-swap bug (Normal
+   and RadialIn/Out come from a frame drastically rotated relative to the horizon frame, unlike
+   Prograde/Retrograde whose source frame happens to sit close to it, which is why only some
+   directions looked wrong).
+5. `KillRot` and `Maneuver` don't use the pointing pipeline above at all:
+   - `KillRot` captures `_vessel.ControlTransform.Rotation` once at engage time
+     (`SetSASKillrot()`) into `_killRotTarget` and just holds it every tick — mirrors vanilla
+     `StabilityAssist`'s own `LockRotation(vessel.ControlTransform.Rotation)` — rather than
+     steering toward any particular direction.
+   - `Maneuver` points at `_telemetry.ManeuverDirection` through the same `BuildPointingRotation`
+     pipeline as other modes, guarded by `_telemetry.HasManeuver` (that telemetry field is a
+     degenerate zero vector when no node is planned, confirmed by decompiling
+     `TelemetryComponent.UpdateManeuverTelemetry`) — falls back to holding current attitude
+     (same approach as `KillRot`) when there's no node.
+6. Fed to `SAS.LockRotation` on an **adaptive refresh interval** (`RefreshInterval_short/mid/long`,
+   keyed off `GetAngleToRotation()`, itself fixed to reframe the vessel's current nose direction
+   into `_rotation`'s coordinate system before comparing — same class of coordinate-mixing bug as
+   #4, just affecting the refresh-rate heuristic rather than pointing accuracy).
+
+**Diagnostics:** `SASManager` logs through ReduxLib's per-class logger
+(`SASExtended|SASManager`) — `LogInfo` on every mode change (`SetMode`), and a `LogDebug` line at
+the end of every `SetRotation()` tick with the mode, applied H/P/R values (and each axis's
+enabled/disabled flag), angle-to-target, and all the orbit/horizon direction vectors — so future
+orientation bugs can be diagnosed from the log directly instead of re-deriving everything through
+decompilation again.
+
+**Remaining known gaps:** Star modes (`SpecialStarPlus/Minus`) run through the same pipeline but
+are flagged `// doesn't work` in-code and haven't been re-verified in-game since the rewrite; SURF/
+TGT/SPEC direction buttons are wired in the switch but not exposed/tested via the UI (roadmap, not
+required for v1).
 
 ## Build / deploy
 
@@ -223,6 +329,46 @@ autopilot mod and may need none.
 
 ## Status
 
-Fresh scaffold — `SASExtendedPlugin.cs` is still the template "Hello World"; `Definitions/` and
-`Copied/` are empty. No code ported yet. **Next task: begin porting the legacy files above,
-starting with the ORB-tab path (entry point → SASManager equivalent → window).**
+**ORB-tab port done in code** (branch `port-orb-tab`, cut off `development`). Ported into
+`Assets/SASExtended/`:
+
+- `Code/SASExtendedPlugin.cs` — rewritten as `KerbalMod`; loads UXML + appbar icon via the
+  instance `Assets.LoadAssetAsync<T>(key).WaitForCompletion()` accessor, registers the Flight
+  appbar button, spawns the `SASManager` MonoBehaviour.
+- `Code/Managers/SASManager.cs` — ported; ReduxLib `ILogger`; telemetry reached through the
+  **public** `vessel.SimulationObject.Telemetry` (the Redux `Assembly-CSharp` is **not**
+  publicized, so the private `_telemetryComponent` is off-limits — no reflection needed since
+  `SimulationObject.Telemetry`, `Autopilot`, `SAS`, `mainBody`, `MOI` are all public). ORB offset
+  math initially carried over verbatim (Heading→Pitch→Roll) but has since been found wrong and
+  replaced — see "Offset math" above. `KillRot`/`Maneuver` now implemented too. SURF/TGT/SPEC
+  cases kept but unwired (roadmap).
+- `Code/Models/AttitudeMode.cs` — verbatim.
+- `Code/UI/{SceneController,MainWindowController}.cs` — ported; `SceneController.Initialize(uxml)`
+  now takes the pre-loaded `VisualTreeAsset` (no more SW1.x static `AssetManager`).
+- `Code/UI/Controls/{SideToggleControl,TabToggleControl}.cs` — logic verbatim, but **refactored to
+  the Unity 6 UITK pattern**: `[UxmlElement] public partial class` + `[UxmlAttribute]` properties
+  (the old `UxmlFactory`/`UxmlTraits` nested classes are removed — deprecated in Unity 6). Namespace
+  `SASExtended.UI.Controls` preserved so the UXML tag resolves; **no `CustomControls.RegisterFromAssembly`**
+  (that API was removed). Each `[UxmlAttribute]` is given an **explicit name** matching the verbatim
+  UXML's PascalCase attributes (`Text`, `IsBig`, `IsSmall`, `IsEnabled`, `IsToggled`), and `IsEnabled`
+  is declared before `IsToggled` because the new deserializer applies attributes in declaration order
+  and `SetEnabled` resets the toggle — so controls authored `IsEnabled="true" IsToggled="true"`
+  (orb-tab, the x/y/z offset toggles) end up correctly toggled on. Pattern cribbed from OrbitalSurvey
+  (`E:\GitHub\KSP2\OrbitalSurveyRedux\...\UI\Controls\SideToggleControl.cs`).
+- `UI/SASExtended.uxml`, `UI/SASExtended.uss`, `UI/Images/Icons/{retrograde,ICO-Close-med,ELE-Panel-Handle}.png`
+  — copied **byte-for-byte with their `.meta` files** so GUIDs (and every UXML/USS cross-reference)
+  are preserved. True 1:1 UI port; nothing restyled.
+
+**Build constraint:** the Unity asmdef compiles at **C# 9.0** (LangVersion 9.0, Unity 6000.4.1f1)
+— so **no file-scoped namespaces and no `with` on structs** (both C# 10). Use block namespaces and
+object initializers. See [[langversion-csharp9]].
+
+**Remaining — needs the Unity editor (Claude can't drive it):**
+1. Confirm the copied UI assets imported (folder/`.cs` `.meta` files auto-generate on import).
+2. Mark `SASExtended.uxml` and `retrograde.png` **addressable** with addresses matching the
+   `const`s in `SASExtendedPlugin.cs` (`WindowUxmlAddress` / `FlightIconAddress`, currently
+   `SASExtended/SASExtended_ui/ui/sasextended.uxml` and `.../images/icons/retrograde.png`) — or
+   tell Claude the addresses you use and the consts get updated. USS + referenced icons ride along
+   as UXML dependencies, so only these two need explicit addresses.
+3. Run **Build for Editor** and test on a real vessel: ORB directions + Heading/Pitch/Roll offsets,
+   engaged/disengaged via OFF.
