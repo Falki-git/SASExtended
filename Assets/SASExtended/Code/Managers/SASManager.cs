@@ -123,6 +123,13 @@ public class SASManager : MonoBehaviour
         var target = Vector.Reframed(Vector.normalize(_telemetry.TargetDirection), referenceFrame);
         var antiTarget = Vector.negate(target);
 
+        // Vessel's velocity relative to the target (MechJeb's RELATIVE_VELOCITY) - confirmed via
+        // decompile that TelemetryComponent computes TargetPrograde as exactly
+        // normalize(OrbitalMovementVelocity - targetOrbitalVelocity), i.e. relative velocity, not
+        // orbital prograde around the target.
+        var targetRelativePrograde = Vector.Reframed(_telemetry.TargetPrograde, referenceFrame);
+        var targetRelativeRetrograde = Vector.negate(targetRelativePrograde);
+
         var maneuver = Vector.Reframed(Vector.normalize(_telemetry.ManeuverDirection), referenceFrame);
 
         var sunBody = GetParentStar(_vessel);
@@ -130,6 +137,15 @@ public class SASManager : MonoBehaviour
         var antiSun = Vector.negate(sun);
 
         var upwards = Vector.Reframed(Vector.normalize(Position.Delta(_telemetry.RootPosition, _telemetry.SOIPosition)), referenceFrame);
+
+        // Horizontal component of surface velocity (vertical component projected out via the same
+        // dot/minus pattern Hover already uses for its tilt calc - Vector.dot/minus reframe their
+        // second argument into the first's coordinateSystem automatically, so mixing the unreframed
+        // telemetry vector with the already-reframed "upwards" here is safe).
+        var horizontalVelocity = Vector.Reframed(
+            Vector.normalize(Vector.minus(_telemetry.SurfaceMovementVelocity, Vector.scale(upwards, Vector.dot(_telemetry.SurfaceMovementVelocity, upwards)))),
+            referenceFrame);
+        var antiHorizontalVelocity = Vector.negate(horizontalVelocity);
 
         // Values actually commanded this tick - populated per-branch below (a disabled H/P/R control
         // doesn't just force its value to 0; see BuildPointingRotation/GetCurrentOffsetAngles).
@@ -173,14 +189,39 @@ public class SASManager : MonoBehaviour
             case AttitudeMode.SurfaceSvelMinus:
                 _rotation = BuildPointingRotation(surfaceRetrograde, upwards, out effX, out effY, out effZ);
                 break;
+            case AttitudeMode.SurfaceHvelPlus:
+                _rotation = BuildPointingRotation(horizontalVelocity, upwards, out effX, out effY, out effZ);
+                break;
+            case AttitudeMode.SurfaceHvelMinus:
+                _rotation = BuildPointingRotation(antiHorizontalVelocity, upwards, out effX, out effY, out effZ);
+                break;
             case AttitudeMode.TargetPlus:
                 _rotation = BuildPointingRotation(target, upwards, out effX, out effY, out effZ);
                 break;
+            case AttitudeMode.TargetMinus:
+                _rotation = BuildPointingRotation(antiTarget, upwards, out effX, out effY, out effZ);
+                break;
+            case AttitudeMode.TargetRvelPlus:
+                _rotation = BuildPointingRotation(targetRelativePrograde, upwards, out effX, out effY, out effZ);
+                break;
+            case AttitudeMode.TargetRvelMinus:
+                _rotation = BuildPointingRotation(targetRelativeRetrograde, upwards, out effX, out effY, out effZ);
+                break;
+            case AttitudeMode.TargetParPlus:
+                _rotation = BuildTargetOrientationRotation(reversed: false, upwards, out effX, out effY, out effZ);
+                break;
+            case AttitudeMode.TargetParMinus:
+                _rotation = BuildTargetOrientationRotation(reversed: true, upwards, out effX, out effY, out effZ);
+                break;
+            // Star pointing now runs through the same LookRotation-based BuildPointingRotation as
+            // every other mode (the earlier "doesn't work" note predates that rewrite - see the
+            // Offset math section of mod_specifics.md); wired to the UI but not yet re-verified
+            // in-game.
             case AttitudeMode.SpecialStarPlus:
-                _rotation = BuildPointingRotation(sun, upwards, out effX, out effY, out effZ); // doesn't work
+                _rotation = BuildPointingRotation(sun, upwards, out effX, out effY, out effZ);
                 break;
             case AttitudeMode.SpecialStarMinus:
-                _rotation = BuildPointingRotation(antiSun, upwards, out effX, out effY, out effZ); // doesn't work
+                _rotation = BuildPointingRotation(antiSun, upwards, out effX, out effY, out effZ);
                 break;
             case AttitudeMode.SurfaceUp:
                 // Target is "upwards" itself, so it can't also be used as LookRotation's up-hint
@@ -279,7 +320,8 @@ public class SASManager : MonoBehaviour
             $"prograde={FormatVector(orbitPrograde)} retrograde={FormatVector(orbitRetrograde)} " +
             $"normal={FormatVector(orbitNormal)} antiNormal={FormatVector(orbitAntiNormal)} " +
             $"radialIn={FormatVector(orbitRadialIn)} radialOut={FormatVector(orbitRadialOut)} " +
-            $"upwards={FormatVector(upwards)} north={FormatVector(north)}");
+            $"upwards={FormatVector(upwards)} north={FormatVector(north)} " +
+            $"horizontalVelocity={FormatVector(horizontalVelocity)} targetRelativePrograde={FormatVector(targetRelativePrograde)}");
     }
 
     private static string FormatVector(Vector v) => $"({v.vector.x:F3},{v.vector.y:F3},{v.vector.z:F3})";
@@ -305,6 +347,35 @@ public class SASManager : MonoBehaviour
         var rotation = look;
         rotation.localRotation = look.localRotation * QuaternionD.Euler(-appliedY, appliedX, appliedZ) * QuaternionD.Euler(90, 0, 0);
         return rotation;
+    }
+
+    // PAR+/PAR- (Target Parallel) align with - or against - the target's own facing (nose) direction,
+    // unlike TargetPlus/Minus which point at the target's *position*. TelemetryComponent.TargetFrame
+    // is a live "targetTransformInternal.bodyFrame" accessor that throws a NullReferenceException when
+    // no target is selected (unlike TargetDirection etc., which are auto-properties that just hold a
+    // stale/zero value) - so this must be guarded and can't be computed unconditionally up front like
+    // the other direction vectors. Falls back to holding current attitude when there's no target, same
+    // as Maneuver/KillRot.
+    //
+    // The target's "nose" is TargetFrame.up, not .forward: every vessel-attached frame in this engine
+    // treats the long/up axis as the facing direction, not Unity's usual Z-forward - GetAngleToRotation
+    // below reads the SAME vessel's current facing via "_vessel.MOI.coordinateSystem.up", and
+    // BuildPointingRotation's trailing Euler(90,0,0) exists specifically to remap LookRotation's
+    // Z-forward result onto that up axis. Using .forward/.back here (an earlier version of this method)
+    // reads a different axis of the same orthonormal frame - 90 degrees off, which is exactly the
+    // horizon-ish/off-to-the-side error observed in-game instead of pointing along the target's nose.
+    private Rotation BuildTargetOrientationRotation(bool reversed, Vector upHint, out double appliedX, out double appliedY, out double appliedZ)
+    {
+        if (!_telemetry.HasTargetObject)
+        {
+            appliedX = 0;
+            appliedY = 0;
+            appliedZ = 0;
+            return _vessel.ControlTransform.Rotation;
+        }
+
+        var targetFacing = Vector.Reframed(reversed ? _telemetry.TargetFrame.down : _telemetry.TargetFrame.up, upHint.coordinateSystem);
+        return BuildPointingRotation(targetFacing, upHint, out appliedX, out appliedY, out appliedZ);
     }
 
     // A disabled H/P/R control should let that axis drift freely instead of being pinned to a fixed
@@ -354,6 +425,23 @@ public class SASManager : MonoBehaviour
     public void SetOrbitAntiNormal() => SetMode(AttitudeMode.OrbitAntiNormal);
     public void SetOrbitRadialIn() => SetMode(AttitudeMode.OrbitRadialIn);
     public void SetOrbitRadialOut() => SetMode(AttitudeMode.OrbitRadialOut);
+
+    public void SetSurfaceSvelPlus() => SetMode(AttitudeMode.SurfaceSvelPlus);
+    public void SetSurfaceSvelMinus() => SetMode(AttitudeMode.SurfaceSvelMinus);
+    public void SetSurfaceSurf() => SetMode(AttitudeMode.SurfaceSurf);
+    public void SetSurfaceHvelPlus() => SetMode(AttitudeMode.SurfaceHvelPlus);
+    public void SetSurfaceHvelMinus() => SetMode(AttitudeMode.SurfaceHvelMinus);
+    public void SetSurfaceUp() => SetMode(AttitudeMode.SurfaceUp);
+
+    public void SetTargetPlus() => SetMode(AttitudeMode.TargetPlus);
+    public void SetTargetRvelPlus() => SetMode(AttitudeMode.TargetRvelPlus);
+    public void SetTargetParPlus() => SetMode(AttitudeMode.TargetParPlus);
+    public void SetTargetMinus() => SetMode(AttitudeMode.TargetMinus);
+    public void SetTargetRvelMinus() => SetMode(AttitudeMode.TargetRvelMinus);
+    public void SetTargetParMinus() => SetMode(AttitudeMode.TargetParMinus);
+
+    public void SetSpecialStarPlus() => SetMode(AttitudeMode.SpecialStarPlus);
+    public void SetSpecialStarMinus() => SetMode(AttitudeMode.SpecialStarMinus);
 
     /// <summary>
     /// Engages hover: SAS holds the vessel thrust-up (tilting to null horizontal velocity) while the

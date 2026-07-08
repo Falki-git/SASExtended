@@ -1,3 +1,4 @@
+using System;
 using KSP.UI.Binding;
 using SASExtended.Managers;
 using SASExtended.UI.Controls;
@@ -60,6 +61,10 @@ public class MainWindowController : MonoBehaviour
     private SideToggleControl _starMinusToggle;
 
     private SideToggleControl _hoverToggle;
+
+    // Every mutually-exclusive mode toggle (global modes + all direction buttons across all tabs),
+    // used by ClearAllModeToggles/RegisterModeButton so only one is ever shown toggled on.
+    private SideToggleControl[] _allModeToggles;
 
     private SideToggleControl _xToggle;
     private FloatField _xValue;
@@ -133,15 +138,12 @@ public class MainWindowController : MonoBehaviour
         _offToggle = _root.Q<SideToggleControl>("off");
         _offToggle.SetEnabled(true);
         _offToggle.SwitchToggleState(false, false);
-        _offToggle.RegisterCallback<ClickEvent>(OnOffClicked);
         _killrotToggle = _root.Q<SideToggleControl>("killrot");
         _killrotToggle.SetEnabled(true);
         _killrotToggle.SwitchToggleState(false, false);
-        _killrotToggle.RegisterCallback<ClickEvent>(OnKillrotClicked);
         _nodeToggle = _root.Q<SideToggleControl>("node");
         _nodeToggle.SetEnabled(true);
         _nodeToggle.SwitchToggleState(false, false);
-        _nodeToggle.RegisterCallback<ClickEvent>(OnNodeClicked);
 
         _orbitTabToggle = _root.Q<TabToggleControl>("orb-tab");
         _orbitTabToggle.RegisterCallback<ClickEvent>(OnOrbitTabClicked);
@@ -157,17 +159,11 @@ public class MainWindowController : MonoBehaviour
         _specialContainer = _root.Q<VisualElement>("spec-container");
 
         _progradeToggle = _root.Q<SideToggleControl>("prograde");
-        _progradeToggle.RegisterCallback<ClickEvent>(OnProgradeClicked);
         _normalToggle = _root.Q<SideToggleControl>("normal");
-        _normalToggle.RegisterCallback<ClickEvent>(OnNormalClicked);
         _radialInToggle = _root.Q<SideToggleControl>("radialin");
-        _radialInToggle.RegisterCallback<ClickEvent>(OnRadialInClicked);
         _retrogradeToggle = _root.Q<SideToggleControl>("retrograde");
-        _retrogradeToggle.RegisterCallback<ClickEvent>(OnRetrogradeClicked);
         _antinormalToggle = _root.Q<SideToggleControl>("antinormal");
-        _antinormalToggle.RegisterCallback<ClickEvent>(OnAntiNormalClicked);
         _radialOutToggle = _root.Q<SideToggleControl>("radialout");
-        _radialOutToggle.RegisterCallback<ClickEvent>(OnRadialOutClicked);
 
         _svelPlusToggle = _root.Q<SideToggleControl>("svelplus");
         _svelMinusToggle = _root.Q<SideToggleControl>("svelminus");
@@ -187,7 +183,53 @@ public class MainWindowController : MonoBehaviour
         _starMinusToggle = _root.Q<SideToggleControl>("starminus");
 
         _hoverToggle = _root.Q<SideToggleControl>("hover");
-        _hoverToggle.RegisterCallback<ClickEvent>(OnHoverClicked);
+
+        // Every mode toggle is mutually exclusive with every other one, across all tabs - build the
+        // full set once here so ClearAllModeToggles/RegisterModeButton don't need per-button
+        // boilerplate to know what else to switch off.
+        _allModeToggles = new[]
+        {
+            _offToggle, _killrotToggle, _nodeToggle,
+            _progradeToggle, _normalToggle, _radialInToggle, _retrogradeToggle, _antinormalToggle, _radialOutToggle,
+            _svelPlusToggle, _svelMinusToggle, _surfToggle, _hvelPlusToggle, _hvelMinusToggle, _upToggle,
+            _targetPlusToggle, _relativeVelocityPlusToggle, _parPlusToggle, _targetMinusToggle, _relativeVelocityMinusToggle, _parMinusToggle,
+            _starPlusToggle, _starMinusToggle,
+            _hoverToggle
+        };
+
+        RegisterModeButton(_offToggle, () => SASManager.Instance.SetSASOff());
+        RegisterModeButton(_killrotToggle, () => SASManager.Instance.SetSASKillrot());
+        RegisterModeButton(_nodeToggle, () => SASManager.Instance.SetSASManeuver());
+
+        RegisterModeButton(_progradeToggle, () => SASManager.Instance.SetOrbitPrograde());
+        RegisterModeButton(_normalToggle, () => SASManager.Instance.SetOrbitNormal());
+        // The "RAD +" button is named "radialin" in the (verbatim-ported) UXML, but per the MechJeb
+        // SmartASS convention (Radial+ = Vector3d.up = radially outward), "+" means away from the
+        // body - so this button must invoke SetOrbitRadialOut(), not RadialIn(). Same swap applies to
+        // "radialout" below.
+        RegisterModeButton(_radialInToggle, () => SASManager.Instance.SetOrbitRadialOut());
+        RegisterModeButton(_retrogradeToggle, () => SASManager.Instance.SetOrbitRetrograde());
+        RegisterModeButton(_antinormalToggle, () => SASManager.Instance.SetOrbitAntiNormal());
+        RegisterModeButton(_radialOutToggle, () => SASManager.Instance.SetOrbitRadialIn());
+
+        RegisterModeButton(_svelPlusToggle, () => SASManager.Instance.SetSurfaceSvelPlus());
+        RegisterModeButton(_svelMinusToggle, () => SASManager.Instance.SetSurfaceSvelMinus());
+        RegisterModeButton(_surfToggle, () => SASManager.Instance.SetSurfaceSurf());
+        RegisterModeButton(_hvelPlusToggle, () => SASManager.Instance.SetSurfaceHvelPlus());
+        RegisterModeButton(_hvelMinusToggle, () => SASManager.Instance.SetSurfaceHvelMinus());
+        RegisterModeButton(_upToggle, () => SASManager.Instance.SetSurfaceUp());
+
+        RegisterModeButton(_targetPlusToggle, () => SASManager.Instance.SetTargetPlus());
+        RegisterModeButton(_relativeVelocityPlusToggle, () => SASManager.Instance.SetTargetRvelPlus());
+        RegisterModeButton(_parPlusToggle, () => SASManager.Instance.SetTargetParPlus());
+        RegisterModeButton(_targetMinusToggle, () => SASManager.Instance.SetTargetMinus());
+        RegisterModeButton(_relativeVelocityMinusToggle, () => SASManager.Instance.SetTargetRvelMinus());
+        RegisterModeButton(_parMinusToggle, () => SASManager.Instance.SetTargetParMinus());
+
+        RegisterModeButton(_starPlusToggle, () => SASManager.Instance.SetSpecialStarPlus());
+        RegisterModeButton(_starMinusToggle, () => SASManager.Instance.SetSpecialStarMinus());
+
+        RegisterModeButton(_hoverToggle, () => SASManager.Instance.SetHover());
 
         _xToggle = _root.Q<SideToggleControl>("x-toggle");
         _xToggle.RegisterCallback<ClickEvent>(OnXToggleClicked);
@@ -272,153 +314,35 @@ public class MainWindowController : MonoBehaviour
         closeButton.clicked += () => IsWindowOpen = false;
     }
 
-    #region Orbit buttons
+    #region Mode buttons
 
-    private void OnProgradeClicked(ClickEvent evt)
+    // Wires a mode toggle so clicking it engages its mode and clears every other mode toggle, or -
+    // if clicking it just turned it off (it was the active mode) - falls back to OFF. Shared by every
+    // global-mode and direction button across all four tabs so each button is a one-line registration
+    // instead of a ~15-line copy-pasted handler.
+    private void RegisterModeButton(SideToggleControl toggle, Action setMode)
     {
-        if (_progradeToggle.IsToggled)
+        toggle.RegisterCallback<ClickEvent>(evt =>
         {
-            _offToggle.SwitchToggleState(false, false);
-            _killrotToggle.SwitchToggleState(false, false);
-            _nodeToggle.SwitchToggleState(false, false);
-
-            //_progradeToggle.SwitchToggleState(false, false);
-            _normalToggle.SwitchToggleState(false, false);
-            _radialInToggle.SwitchToggleState(false, false);
-            _retrogradeToggle.SwitchToggleState(false, false);
-            _antinormalToggle.SwitchToggleState(false, false);
-            _radialOutToggle.SwitchToggleState(false, false);
-
-            SASManager.Instance.SetOrbitPrograde();
-        }
-        else
-        {
-            _offToggle.SwitchToggleState(true, false);
-            SASManager.Instance.SetSASOff();
-        }
+            if (toggle.IsToggled)
+            {
+                ClearAllModeToggles(toggle);
+                setMode();
+            }
+            else
+            {
+                _offToggle.SwitchToggleState(true, false);
+                SASManager.Instance.SetSASOff();
+            }
+        });
     }
 
-    private void OnNormalClicked(ClickEvent evt)
+    private void ClearAllModeToggles(SideToggleControl except)
     {
-        if (_normalToggle.IsToggled)
+        foreach (var toggle in _allModeToggles)
         {
-            _offToggle.SwitchToggleState(false, false);
-            _killrotToggle.SwitchToggleState(false, false);
-            _nodeToggle.SwitchToggleState(false, false);
-
-            _progradeToggle.SwitchToggleState(false, false);
-            //_normalToggle.SwitchToggleState(false, false);
-            _radialInToggle.SwitchToggleState(false, false);
-            _retrogradeToggle.SwitchToggleState(false, false);
-            _antinormalToggle.SwitchToggleState(false, false);
-            _radialOutToggle.SwitchToggleState(false, false);
-
-            SASManager.Instance.SetOrbitNormal();
-        }
-        else
-        {
-            _offToggle.SwitchToggleState(true, false);
-            SASManager.Instance.SetSASOff();
-        }
-    }
-    private void OnRadialInClicked(ClickEvent evt)
-    {
-        if (_radialInToggle.IsToggled)
-        {
-            _offToggle.SwitchToggleState(false, false);
-            _killrotToggle.SwitchToggleState(false, false);
-            _nodeToggle.SwitchToggleState(false, false);
-
-            _progradeToggle.SwitchToggleState(false, false);
-            _normalToggle.SwitchToggleState(false, false);
-            //_radialInToggle.SwitchToggleState(false, false);
-            _retrogradeToggle.SwitchToggleState(false, false);
-            _antinormalToggle.SwitchToggleState(false, false);
-            _radialOutToggle.SwitchToggleState(false, false);
-
-            // The "RAD +" button is named "radialin" in the (verbatim-ported) UXML, but per the
-            // MechJeb SmartASS convention (Radial+ = Vector3d.up = radially outward), "+" means
-            // away from the body. So this button must invoke SetOrbitRadialOut(), not RadialIn().
-            SASManager.Instance.SetOrbitRadialOut();
-        }
-        else
-        {
-            _offToggle.SwitchToggleState(true, false);
-            SASManager.Instance.SetSASOff();
-        }
-    }
-
-    private void OnRetrogradeClicked(ClickEvent evt)
-    {
-        if (_retrogradeToggle.IsToggled)
-        {
-            _offToggle.SwitchToggleState(false, false);
-            _killrotToggle.SwitchToggleState(false, false);
-            _nodeToggle.SwitchToggleState(false, false);
-
-            _progradeToggle.SwitchToggleState(false, false);
-            _normalToggle.SwitchToggleState(false, false);
-            _radialInToggle.SwitchToggleState(false, false);
-            //_retrogradeToggle.SwitchToggleState(false, false);
-            _antinormalToggle.SwitchToggleState(false, false);
-            _radialOutToggle.SwitchToggleState(false, false);
-
-            SASManager.Instance.SetOrbitRetrograde();
-        }
-        else
-        {
-            _offToggle.SwitchToggleState(true, false);
-            SASManager.Instance.SetSASOff();
-        }
-    }
-
-    private void OnAntiNormalClicked(ClickEvent evt)
-    {
-        if (_antinormalToggle.IsToggled)
-        {
-            _offToggle.SwitchToggleState(false, false);
-            _killrotToggle.SwitchToggleState(false, false);
-            _nodeToggle.SwitchToggleState(false, false);
-
-            _progradeToggle.SwitchToggleState(false, false);
-            _normalToggle.SwitchToggleState(false, false);
-            _radialInToggle.SwitchToggleState(false, false);
-            _retrogradeToggle.SwitchToggleState(false, false);
-            //_antinormalToggle.SwitchToggleState(false, false);
-            _radialOutToggle.SwitchToggleState(false, false);
-
-            SASManager.Instance.SetOrbitAntiNormal();
-        }
-        else
-        {
-            _offToggle.SwitchToggleState(true, false);
-            SASManager.Instance.SetSASOff();
-        }
-    }
-
-    private void OnRadialOutClicked(ClickEvent evt)
-    {
-        if (_radialOutToggle.IsToggled)
-        {
-            _offToggle.SwitchToggleState(false, false);
-            _killrotToggle.SwitchToggleState(false, false);
-            _nodeToggle.SwitchToggleState(false, false);
-
-            _progradeToggle.SwitchToggleState(false, false);
-            _normalToggle.SwitchToggleState(false, false);
-            _radialInToggle.SwitchToggleState(false, false);
-            _retrogradeToggle.SwitchToggleState(false, false);
-            _antinormalToggle.SwitchToggleState(false, false);
-            //_radialOutToggle.SwitchToggleState(false, false);
-
-            // "RAD -" is named "radialout" in the UXML but must invoke SetOrbitRadialIn() — see the
-            // matching comment in OnRadialInClicked().
-            SASManager.Instance.SetOrbitRadialIn();
-        }
-        else
-        {
-            _offToggle.SwitchToggleState(true, false);
-            SASManager.Instance.SetSASOff();
+            if (toggle != except)
+                toggle.SwitchToggleState(false, false);
         }
     }
 
@@ -476,106 +400,6 @@ public class MainWindowController : MonoBehaviour
     }
 
     #endregion
-
-    private void OnOffClicked(ClickEvent evt)
-    {
-        if (_offToggle.IsToggled)
-        {
-            //_offToggle.SwitchToggleState(false, false);
-            _killrotToggle.SwitchToggleState(false, false);
-            _nodeToggle.SwitchToggleState(false, false);
-
-            _progradeToggle.SwitchToggleState(false, false);
-            _normalToggle.SwitchToggleState(false, false);
-            _radialInToggle.SwitchToggleState(false, false);
-            _retrogradeToggle.SwitchToggleState(false, false);
-            _antinormalToggle.SwitchToggleState(false, false);
-            _radialOutToggle.SwitchToggleState(false, false);
-
-            _hoverToggle.SwitchToggleState(false, false);
-        }
-        else
-        {
-            _offToggle.SwitchToggleState(true, false);
-        }
-
-        SASManager.Instance.SetSASOff();
-    }
-
-    private void OnKillrotClicked(ClickEvent evt)
-    {
-        if (_killrotToggle.IsToggled)
-        {
-            _offToggle.SwitchToggleState(false, false);
-            //_killrotToggle.SwitchToggleState(false, false);
-            _nodeToggle.SwitchToggleState(false, false);
-
-            _progradeToggle.SwitchToggleState(false, false);
-            _normalToggle.SwitchToggleState(false, false);
-            _radialInToggle.SwitchToggleState(false, false);
-            _retrogradeToggle.SwitchToggleState(false, false);
-            _antinormalToggle.SwitchToggleState(false, false);
-            _radialOutToggle.SwitchToggleState(false, false);
-
-            SASManager.Instance.SetSASKillrot();
-        }
-        else
-        {
-            _offToggle.SwitchToggleState(true, false);
-            SASManager.Instance.SetSASOff();
-
-        }
-    }
-
-    private void OnNodeClicked(ClickEvent evt)
-    {
-        if (_nodeToggle.IsToggled)
-        {
-            _offToggle.SwitchToggleState(false, false);
-            _killrotToggle.SwitchToggleState(false, false);
-            //_nodeToggle.SwitchToggleState(false, false);
-
-            _progradeToggle.SwitchToggleState(false, false);
-            _normalToggle.SwitchToggleState(false, false);
-            _radialInToggle.SwitchToggleState(false, false);
-            _retrogradeToggle.SwitchToggleState(false, false);
-            _antinormalToggle.SwitchToggleState(false, false);
-            _radialOutToggle.SwitchToggleState(false, false);
-
-            // TEMP. Fix me! SetSasManeuver() is the correct call
-            //SASManager.Instance.SetSASManeuver();
-            SASManager.Instance.SetHorizon();
-        }
-        else
-        {
-            _offToggle.SwitchToggleState(true, false);
-            SASManager.Instance.SetSASOff();
-        }
-    }
-
-    private void OnHoverClicked(ClickEvent evt)
-    {
-        if (_hoverToggle.IsToggled)
-        {
-            _offToggle.SwitchToggleState(false, false);
-            _killrotToggle.SwitchToggleState(false, false);
-            _nodeToggle.SwitchToggleState(false, false);
-
-            _progradeToggle.SwitchToggleState(false, false);
-            _normalToggle.SwitchToggleState(false, false);
-            _radialInToggle.SwitchToggleState(false, false);
-            _retrogradeToggle.SwitchToggleState(false, false);
-            _antinormalToggle.SwitchToggleState(false, false);
-            _radialOutToggle.SwitchToggleState(false, false);
-
-            SASManager.Instance.SetHover();
-        }
-        else
-        {
-            _offToggle.SwitchToggleState(true, false);
-            SASManager.Instance.SetSASOff();
-        }
-    }
 
     private void OnXToggleClicked(ClickEvent evt)
     {
