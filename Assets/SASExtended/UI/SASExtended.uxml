@@ -55,7 +55,7 @@
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="STAR\n-" IsBig="true" IsEnabled="true" name="starminus"/>
                     </ui:VisualElement>
                 </ui:VisualElement>
-                <ui:VisualElement name="attitude-controls" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 50%; padding-top: 0; padding-bottom: 5px; width: 100%; padding-left: 0; padding-right: 0; align-items: center;">
+                <ui:VisualElement name="offset-controls" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 50%; padding-top: 0; padding-bottom: 5px; width: 100%; padding-left: 0; padding-right: 0; align-items: center;">
                     <ui:VisualElement name="heading-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 30%; flex-direction: row; -unity-text-align: middle-left; padding-top: 2px; padding-bottom: 2px; align-items: center; width: 100%; justify-content: space-around; padding-right: 2px; padding-left: 2px;">
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="Heading" IsSmall="true" IsEnabled="true" IsToggled="true" name="x-toggle"/>
                         <ui:FloatField value="0" name="x-value" class="attitude-input-field"/>

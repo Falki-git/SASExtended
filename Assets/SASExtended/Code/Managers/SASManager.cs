@@ -27,137 +27,43 @@ public class SASManager : MonoBehaviour
     public double AngleToRotation_large = 30;
 
     // --- Hover control ---------------------------------------------------------------------------
-    // In Hover mode the manager both points the vessel (thrust axis up, tilted against horizontal
-    // velocity) AND drives the throttle. The throttle value is read back by the Harmony patch on
-    // FlightInputHandler (see Patches/FlightInputHandlerThrottlePatch) each FixedUpdate.
+    // Hover both points the vessel (thrust axis up, tilted to null horizontal velocity) and drives
+    // the throttle - the throttle value is read back by the Harmony patch on FlightInputHandler (see
+    // Patches/FlightInputHandlerThrottlePatch) each FixedUpdate. The tilt/throttle coupling is
+    // inspired by MechJeb2's Translatron + ThrustController (KEEP_VERTICAL + TransKillH).
     //
-    // The tilt/throttle coupling below is ported from MechJeb2's Translatron + ThrustController
-    // (KEEP_VERTICAL + TransKillH), fixing two known bugs (see .claude/mod_specifics.md "Hover mode
-    // - known bugs"):
-    //  1. The old law capped the anti-drift tilt at a fixed HoverMaxTilt angle, which saturated at
-    //     any real horizontal drift (>~1 m/s with the old gain) and turned the correction bang-bang
-    //     instead of proportional, producing a limit-cycle oscillation. Replaced with a floor blend
-    //     (HoverTiltAuthorityFloor, or the vessel's actual vertical speed if that's bigger) - the
-    //     same shape as MechJeb's `up * Max(|vspeed|, 20*gee)` - so the tilt angle is a smooth
-    //     function of drift-vs-floor with no hard cap to saturate against.
-    //  2. The vertical-speed PID could correctly zero throttle (you can't thrust to descend faster)
-    //     while horizontal drift ran away uncorrected, because tilting a zero-thrust vessel applies
-    //     no force regardless of direction. This was originally "fixed" with an escape valve
-    //     (mirroring MechJeb's Translatron DIRECT mode) that pointed purely retrograde-to-drift at a
-    //     fixed max throttle, abandoning vertical-speed tracking entirely past a drift threshold.
-    //     REMOVED (2026-07-10) after it caused a real crash on Tylo: once triggered on a genuinely
-    //     large, sustained drift, it reserves zero vertical thrust for as long as it stays active,
-    //     so the vessel free-falls the whole time (confirmed: actualVSpeed ran to -436 m/s while
-    //     escape stayed engaged) - and since its target direction has no floor/damping the way the
-    //     normal blend does, it re-triggers the *original* bang-bang problem (chasing a horizontal
-    //     velocity vector that itself keeps rotating from attitude-slew lag) with none of the normal
-    //     blend's safety margin. HoverMaxTiltAngle below now provides the safety net the escape valve
-    //     was meant to provide, without the zero-vertical-authority failure mode.
-    //
-    // The throttle law itself holds HoverTargetVerticalSpeed directly (0 by default at engage) -
-    // it does NOT hold the engagement altitude. Whatever altitude the vessel ends up at once its
-    // vertical speed reaches the target is where it hovers; a fixed-altitude lock actively fights
-    // this (a vessel engaging Hover while still climbing would coast - correctly, you can't thrust
-    // to climb faster - all the way past the engage altitude before an altitude-derived target
-    // speed ever pulled back down near zero, deferring any throttle response by however long that
-    // coast took). This also lays the groundwork for a future signed target-vertical-speed input
-    // (still no UI for it - HoverTargetVerticalSpeed is reset to 0 on every engage for now).
-    //
-    // HoverThrottleKd adds the derivative term MechJeb's own PIDController(0.05, 0.000001, 0.05)
-    // has and ours previously didn't - without it the P+I law overshoots and limit-cycles around
-    // the target (confirmed in-game: throttle swinging between ~0 and ~0.9 over several seconds,
-    // slowly decaying instead of settling) because nothing opposes a fast-changing vertical speed
-    // until the P/I terms have already caught up. The D term reacts to the vessel's own vertical
-    // acceleration and backs the throttle off pre-emptively before the overshoot happens.
-    //
-    // HoverTiltAuthorityFloor scales with the vessel's own self-tuned hover throttle
-    // (_throttleIntegral) instead of being a flat constant. Root-caused in-game: at a fixed floor,
-    // a vessel already near its target vertical speed only tilts ~45 degrees for ~10 m/s of drift,
-    // and - more importantly - the underlying throttle magnitude is driven entirely by the
-    // vertical-speed PID, which wants almost nothing once vertical speed is near target. Tilting a
-    // near-zero-thrust vessel harder doesn't create meaningfully more lateral force (confirmed via
-    // `Player.log`: HoverThrottle sitting at ~0.015-0.018 - basically nothing - while hoverCosTilt
-    // was already 0.705/45 degrees). A powerful engine (low self-tuned hover throttle) has lots of
-    // spare thrust budget to redirect sideways without sacrificing vertical authority (the existing
-    // `/hoverCosTilt` boost in UpdateHoverThrottle already raises total thrust to compensate,
-    // exactly the "greater thrust" the tilt needs) - it should tilt much harder for the same drift
-    // than a vessel with little spare margin. Scaling the floor by _throttleIntegral relative to
-    // HoverTiltReferenceThrottle makes that self-tuning, the same way the throttle integral already
-    // self-tunes to TWR without a per-vessel thrust/mass model.
+    // Holds HoverTargetVerticalSpeed directly (0 by default at engage), NOT the engagement altitude
+    // - whatever altitude the vessel ends up at once vertical speed reaches target is where it
+    // hovers. Tilt floor (HoverTiltAuthorityFloor) and max tilt angle (HoverTiltThrottleBudget) both
+    // self-tune off the vessel's own hover-equilibrium throttle (_throttleIntegral) instead of flat
+    // per-vessel guesses, so no per-vessel thrust/mass/TWR model is needed anywhere in this control
+    // law. Full round-by-round debugging history (why each piece of this exists, what broke without
+    // it) is in .claude/hover_mode_fixes.md - read it before changing this control law again.
     public float HoverThrottle;                    // 0..1, commanded throttle while hovering
     public double HoverTargetVerticalSpeed;        // m/s, signed target vertical speed (reset to 0 on engage)
     public double HoverThrottleKp = 0.05;          // immediate throttle per m/s of vertical-speed error
     public double HoverThrottleKi = 0.06;          // throttle trim per m/s of vertical-speed error per second
     public double HoverThrottleKd = 0.08;          // throttle damping per m/s^2 of vertical acceleration
-    // Rate limit on the commanded throttle itself (fraction of full throttle per second). Root-caused
-    // on a high-TWR vessel (confirmed by the user, and by `Player.log`: actualVSpeed staying small
-    // and controlled (-7 to +7 m/s) while thrustDrivenAccel swung wildly between -8.7 and +48 m/s^2
-    // every few frames) - a powerful engine turns even a brief full-throttle burst into a huge
-    // acceleration spike, which HoverThrottleKd (a flat gain in raw m/s^2, not normalized to the
-    // vessel's actual thrust capability) reacts to violently, slamming throttle back to 0 - which
-    // then lets gravity swing the reading the other way, repeating (classic bang-bang/relay
-    // oscillation). This showed up as `_throttleIntegral` swinging the full 0-1 range in ~6-8
-    // seconds, which then whipsawed HoverTiltAuthorityFloor/the tilt-angle cap in sync (both keyed
-    // off `_throttleIntegral`) - the horizontal-drift oscillation the user reported ("overcompensate
-    // ... start thrusting in the different direction") was downstream of this, not a separate bug.
-    // Rather than guess at a smaller Kd (the same per-vessel-guess mistake already made twice for the
-    // floor and the angle cap), this bounds the actuator itself, which is TWR-agnostic by
-    // construction - the vessel physically cannot re-derive its own high-TWR bang-bang no matter how
-    // the P/I/D terms react, since the commanded value can only change this fast per second.
+    // Rate limit on the commanded throttle itself - a powerful engine turns even a brief throttle
+    // burst into a large acceleration spike, which HoverThrottleKd then reacts to violently (a
+    // classic bang-bang/relay oscillation). TWR-agnostic by construction: the commanded value can
+    // only change this fast per second regardless of what the P/I/D formula asks for. See
+    // hover_mode_fixes.md round 8 for the failure this fixes.
     public double HoverThrottleMaxRate = 2.0;      // max |Δthrottle|/second - 0->100% takes at least 0.5s
-    // Low-pass time constant for thrustDrivenAccel before it's multiplied by HoverThrottleKd. Even
-    // with the rate limiter above keeping actual engine behavior smooth, `Player.log` still showed
-    // the raw signal feeding the D term jittering hard frame to frame during an otherwise well-settled
-    // hover (thrustDrivenAccel swinging ~3.3 to ~14.2 m/s^2 on consecutive samples while altitude and
-    // vertical speed were both stable) - a raw single-frame finite-difference derivative is a classic
-    // noise-amplification problem, especially on a vessel responsive enough that small per-frame
-    // velocity-reading jitter produces a large computed acceleration. Filtering it (rather than yet
-    // another flat-gain guess) directly targets that noise without assuming anything about the
-    // vessel's TWR, same spirit as the rate limiter above.
+    // Low-pass time constant for thrustDrivenAccel before it's multiplied by HoverThrottleKd - a raw
+    // single-frame finite-difference derivative is noisy even with the rate limiter above damping its
+    // effect on the actual engine. See hover_mode_fixes.md round 9.
     public double HoverThrottleAccelFilterTime = 0.2; // seconds - higher smooths more but reacts slower to genuine trends
     public double HoverTiltAuthorityFloor = 10;    // m/s - nominal floor when hover throttle == HoverTiltReferenceThrottle
     public double HoverTiltReferenceThrottle = 0.2; // throttle fraction the nominal floor above assumes; floor scales down for more powerful engines and up for weaker ones
     public double HoverTiltAuthorityFloorMin = 2;  // m/s - safety floor so tilt can't go near-90 deg before the throttle integral has converged
-    // Hard ceiling on the normal (non-escape) blend's tilt angle. Root-caused on Tylo (high gravity,
-    // no atmosphere - a clean test): horizontal drift grew past 90 m/s while below
-    // HoverEscapeMinAltitude, so the escape valve never engaged, leaving only the normal blend -
-    // which has no angle ceiling of its own and drove hoverCosTilt down to 0.026-0.045 (87-88 deg)
-    // trying to null the drift. At that angle even 100% throttle delivers almost no vertical thrust,
-    // so the vessel just fell - accelerating past -230 m/s before impact, with horizontal speed still
-    // growing the whole time since there was never enough spare thrust to fix either problem. The
-    // self-tuning floor (HoverTiltAuthorityFloor et al.) is good at deciding how aggressively to
-    // tilt, but had nothing stopping it from deciding "all the way to 90 deg" - this caps that
-    // decision at an angle that always keeps some vertical thrust authority in reserve, applied by
-    // raising the floor's effective minimum rather than the floor itself (see SetRotation's Hover
-    // case) so it composes cleanly with the existing floor logic instead of fighting it.
-    //
-    // A flat HoverMaxTiltAngle (originally 75 deg) is itself a guess about how much thrust margin
-    // a vessel has, exactly the same problem the flat HoverTiltAuthorityFloor had before it started
-    // self-tuning. Root-caused on a second Tylo crash with a lower-TWR vessel: capped at 75 deg
-    // (cos = 0.259, only ~26% of thrust reserved vertically), the vessel spent an extended stretch
-    // fighting ~100-165 m/s of horizontal drift while Tylo's gravity (no atmosphere - this was a
-    // clean test) quietly out-accelerated the reserved 26%, and vertical speed ran away to -365 m/s
-    // before the logic re-prioritized (hoverCosTilt correctly climbed back toward 1) - by then there
-    // wasn't enough altitude or thrust budget left, and horizontal speed had *also* plateaued
-    // uncorrected (~118 m/s, flat) once tilt narrowed back toward "up". 75 deg was fine for the
-    // higher-TWR vessels in earlier tests and unsafe for this one - the cap needs to scale with the
-    // vessel the same way the floor does. Now derived from _throttleIntegral (the self-tuned hover
-    // throttle) and HoverTiltThrottleBudget: the max tilt angle is whatever angle would make holding
-    // HoverTargetVerticalSpeed at that angle cost exactly HoverTiltThrottleBudget of total throttle,
-    // leaving the rest as headroom for the P/I/D corrections. A vessel that already needs most of
-    // its throttle just to hover gets little to no tilt margin; a vessel with lots of spare thrust
-    // gets to tilt much harder - same self-tuning principle as the floor, just applied to the angle
-    // ceiling instead.
-    // Raised from 0.8 - the budget is calibrated against _throttleIntegral, the vessel's
-    // *worst-case* hover-equilibrium throttle, not the throttle actually in use at any given moment.
-    // Root-caused on a real 320+ m/s horizontal-drift cancellation that took over 3 minutes:
-    // `Player.log` showed HoverThrottle sitting at a modest, non-saturating ~0.14-0.15 the entire
-    // time (throttleIntegral was ~0.68) while hoverCosTilt stayed pinned at the cap (~0.83-0.87,
-    // ~30 deg) - the vessel had abundant spare thrust it was never allowed to use, because 0.8 only
-    // grants a ~31 deg cap at a 0.68 hover-equilibrium throttle. 0.9 grants ~40 deg for the same
-    // vessel (noticeably faster drift cancellation) while still reserving 10% of throttle as
-    // headroom - nowhere near the razor-thin margin (75 deg flat, ~26% reserved) that caused the
-    // round-7 Tylo crash on a vessel with much less real spare capacity than this one had.
+    // Hard ceiling on the normal blend's tilt angle, self-tuned off _throttleIntegral (the same
+    // self-tuned hover-equilibrium throttle the floor above uses) and HoverTiltThrottleBudget: the
+    // max tilt angle is whatever angle would make holding HoverTargetVerticalSpeed cost exactly that
+    // fraction of total throttle, leaving the rest as headroom. A flat angle is either unsafe on a
+    // low-TWR vessel (not enough reserved vertical thrust) or overly conservative on a high-TWR one
+    // (real spare thrust left unused) - self-tuning avoids guessing which. See hover_mode_fixes.md
+    // rounds 5, 7, and 10 for the crashes/over-conservatism this fixes and why the budget is 0.9.
     public double HoverTiltThrottleBudget = 0.9;    // fraction of throttle the tilt cap will let holding vertical speed cost, leaving the rest as headroom
     public double HoverMaxTiltAngleFallback = 45;   // deg - used only before _throttleIntegral has any data yet (conservative, TWR unknown)
 
@@ -356,11 +262,11 @@ public class SASManager : MonoBehaviour
 
             case AttitudeMode.Hover:
             {
-                // Desired thrust direction: local "up" (away from the planet), blended against the
-                // horizontal surface-velocity component so that thrust bleeds off horizontal motion.
-                // See the field-block comment above for why this is a self-tuning floor blend capped
-                // by a self-tuning max tilt angle, not a separate escape-valve branch (removed - see
-                // there) nor a flat-angle cap (also tried and found unsafe - see there).
+                // Desired thrust direction: local "up", blended against the horizontal
+                // surface-velocity component so thrust bleeds off horizontal motion. Self-tuning
+                // floor blend capped by a self-tuning max tilt angle - see the field-block comment
+                // above and hover_mode_fixes.md for why (a flat-angle cap and a separate escape-valve
+                // branch were both tried and found unsafe).
                 var up = upwards;
                 var actualVerticalSpeed = _vessel.VerticalSrfSpeed;
                 var surfaceVelocity = _telemetry.SurfaceMovementVelocity;
@@ -368,37 +274,24 @@ public class SASManager : MonoBehaviour
                 var horizontalSpeed = horizontal.magnitude;
 
                 // _hoverThrottleIntegralKnown is false only before the first UpdateHoverThrottle tick
-                // after engage; treat that as "unknown yet" rather than "engine is infinitely
-                // powerful" (which would tilt to ~90 deg before there's any real data) - the floor
-                // scale falls back to nominal (1), and the tilt-angle cap falls back to
-                // HoverMaxTiltAngleFallback (a conservative flat guess) until real data arrives.
-                //
-                // This used to be inferred from `_throttleIntegral > 0.0`, which conflated "no data
-                // yet" with "the integral currently sits at its clamped floor of exactly 0.0" - the
-                // latter is a completely normal, ongoing state (e.g. whenever a brief climb needs
-                // less than zero net correction), not a sign of missing data. Root-caused via
-                // `Player.log`: hoverCosTilt flip-flopping repeatedly between 0.707 (the fallback) and
-                // steep values (0.06-0.22) every sample while horizontalSpeed barely changed, tracking
-                // `_throttleIntegral` oscillating between exactly 0 and small positive values deep
-                // into an already-established hover, not near engage.
+                // after engage - treat that as "unknown yet" (fall back to a nominal floor scale and
+                // HoverMaxTiltAngleFallback) rather than inferring it from _throttleIntegral == 0,
+                // which is also a normal mid-flight PID state, not just an engage-time default (see
+                // hover_mode_fixes.md round 11).
                 bool throttleDataKnown = _hoverThrottleIntegralKnown;
                 double throttleScale = throttleDataKnown ? _throttleIntegral / HoverTiltReferenceThrottle : 1.0;
 
                 // cos(max tilt angle): the angle at which holding HoverTargetVerticalSpeed would cost
                 // exactly HoverTiltThrottleBudget of total throttle (_throttleIntegral / cos(angle) ==
-                // budget), leaving the rest as headroom - self-tuning the same way the floor above
-                // does, so a low-TWR vessel gets much less tilt margin than a high-TWR one instead of
-                // both getting the same flat angle. Clamped to at most 0.999 so the tan-based floor
-                // conversion below never divides by (near-)zero.
+                // budget). Clamped to at most 0.999 so the tan-based floor conversion below never
+                // divides by (near-)zero.
                 double cosMaxTilt = throttleDataKnown
                     ? Math.Min(_throttleIntegral / HoverTiltThrottleBudget, 0.999)
                     : Math.Cos(HoverMaxTiltAngleFallback * Math.PI / 180.0);
                 double sinMaxTilt = Math.Sqrt(Math.Max(0.0, 1.0 - cosMaxTilt * cosMaxTilt));
 
-                // Logged unconditionally (even in the horizontalSpeed < 0.05 branch, where they're not
-                // used) so [Hover/attitude] always shows the full floor breakdown - which term is
-                // binding (self-tuned floor vs. actual-speed floor vs. the tilt-angle cap) was exactly
-                // the missing piece while diagnosing the last two Tylo crashes.
+                // Logged unconditionally (even when unused below) so [Hover/attitude] always shows
+                // which term is binding - self-tuned floor, actual-speed floor, or the angle cap.
                 double tiltFloor = Math.Max(HoverTiltAuthorityFloor * throttleScale, HoverTiltAuthorityFloorMin);
                 double maxAngleFloor = horizontalSpeed * cosMaxTilt / sinMaxTilt;
 
@@ -410,9 +303,8 @@ public class SASManager : MonoBehaviour
                 else
                 {
                     double verticalFloor = Math.Max(Math.Abs(actualVerticalSpeed), tiltFloor);
-                    // Hard ceiling: whatever the floor logic above decided, never let the resulting
-                    // angle exceed the self-tuned max tilt angle - raising verticalFloor's effective
-                    // minimum to whatever value caps atan(horizontalSpeed/verticalFloor) at that angle.
+                    // Hard ceiling: raise verticalFloor's effective minimum to whatever value caps
+                    // atan(horizontalSpeed/verticalFloor) at the self-tuned max tilt angle.
                     verticalFloor = Math.Max(verticalFloor, maxAngleFloor);
                     desired = Vector.normalize(Vector.minus(Vector.scale(up, verticalFloor), horizontal));
                 }
@@ -650,25 +542,14 @@ public class SASManager : MonoBehaviour
         double verticalAccel = (actualVerticalSpeed - _lastVerticalSpeedForDerivative) / dt;
         _lastVerticalSpeedForDerivative = actualVerticalSpeed;
         // Subtract out the baseline free-fall deceleration so the D term only reacts to
-        // thrust/drag-driven acceleration, not to gravity itself. Root-caused on Kerbin: coasting at
-        // zero throttle decelerates at ~1 g (~9.8 m/s^2, vs. Minmus's ~0.05 g), which a raw-vAccel D
-        // term can't tell apart from an actual overshoot - it fired throttle up to fight ordinary
-        // gravity, which then read as its own "overshoot" once thrust kicked in, cutting throttle
-        // back to 0 and repeating (confirmed via Player.log: HoverThrottle cycling ~0<->0.5-1.0 every
-        // few frames, vessel permanently stuck climbing at ~10 m/s, never converging - the P term's
-        // correct "still climbing too fast, throttle down" signal was being swamped by this). Worked
-        // fine on Minmus purely because 20x weaker gravity made the same bug 20x smaller.
-        //
-        // NOTE: VesselComponent.gravityTrue (tried first) is always zero - its private setter is
-        // never called anywhere in VesselComponent (confirmed by decompiling the whole type), so it
-        // silently no-op'd this entire fix on the first attempt (still crashed on Tylo, identical
-        // symptoms, thrustDrivenAccel logged identical to vAccel every frame). gravityForPos is a
-        // live computed property (UniverseModel.GetGeeForceAtPosition, a genuine -GM/r^2 calc, not a
-        // cached field) and is the one that actually works.
+        // thrust/drag-driven acceleration, not to gravity itself - a raw-vAccel D term can't tell
+        // ordinary coasting deceleration apart from a real overshoot, and fires throttle to fight
+        // gravity on high-g bodies (see hover_mode_fixes.md round 4). Use gravityForPos, not
+        // gravityTrue - the latter is a dead field, never assigned anywhere in the decompiled type
+        // (see [[verify-decompiled-fields]] in memory).
         double thrustDrivenAccel = verticalAccel + _vessel.gravityForPos.magnitude;
         // Low-pass filter before this feeds the D term - see HoverThrottleAccelFilterTime's field
-        // comment for why (a raw single-frame finite-difference derivative is noisy, especially on a
-        // responsive vessel, and that noise was reaching the throttle formula undamped).
+        // comment for why.
         double filterAlpha = 1.0 - Math.Exp(-dt / HoverThrottleAccelFilterTime);
         _filteredThrustDrivenAccel += (thrustDrivenAccel - _filteredThrustDrivenAccel) * filterAlpha;
 
