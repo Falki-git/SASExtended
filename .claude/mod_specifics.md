@@ -234,9 +234,9 @@ Engaging hover commands throttle but does not auto-stage — engines must alread
 **First working release = the ORB tab, fully functional** — the six orbital directions plus
 working Heading/Pitch/Roll offsets (including free-axis-when-disabled), engaged/disengaged via
 OFF, with SAS actually holding the computed orientation on a real vessel. **`KILL ROT` and `NODE`
-(maneuver) are now also implemented** (see the Offset math section below). SURF / TGT / SPEC
-direction buttons remain **roadmap**, not required for v1. (The legacy prototype is furthest along
-on exactly the ORB modes.)
+(maneuver) are now also implemented** (see the Offset math section below). **SURF, TGT, and SPEC
+(Star+/Star-) direction buttons are now implemented in code too** (branch `port-orb-tab`, not yet
+in-game tested — see Status below).
 
 ## Porting from the legacy prototype
 
@@ -313,10 +313,33 @@ enabled/disabled flag), angle-to-target, and all the orbit/horizon direction vec
 orientation bugs can be diagnosed from the log directly instead of re-deriving everything through
 decompilation again.
 
-**Remaining known gaps:** Star modes (`SpecialStarPlus/Minus`) run through the same pipeline but
-are flagged `// doesn't work` in-code and haven't been re-verified in-game since the rewrite; SURF/
-TGT/SPEC direction buttons are wired in the switch but not exposed/tested via the UI (roadmap, not
-required for v1).
+**Remaining known gaps:** SURF/TGT/SPEC direction buttons are now wired end-to-end (`SASManager`
+switch cases + `SetXxx()` calls + `MainWindowController` toggle registration) but **not yet
+in-game verified** — needs a Unity build + real-vessel test (see Status below). Two new modes
+needed extra derivation beyond the existing ORB pipeline:
+- **H VEL+/-** (`SurfaceHvelPlus/Minus`): horizontal component of surface velocity, computed the
+  same way Hover already projects out the vertical component for its tilt calc
+  (`surfaceVelocity - up * dot(surfaceVelocity, up)`, normalized).
+- **R VEL+/-** (`TargetRvelPlus/Minus`): confirmed via decompiling `TelemetryComponent` that
+  `TargetPrograde`/`TargetRetrograde` are already exactly the vessel's velocity *relative to the
+  target* (`normalize(OrbitalMovementVelocity - targetOrbitalVelocity)`), matching MechJeb's
+  `RELATIVE_VELOCITY` reference — no new math needed, just reframe and wire up.
+- **PAR+/-** (`TargetParPlus/Minus`): aligns with the *target's own facing* (e.g. a docking port),
+  via `TelemetryComponent.TargetFrame.forward/back` — unlike every other telemetry direction field
+  (auto-properties that hold a stale/zero value with no target), `TargetFrame` is a live accessor
+  that **throws `NullReferenceException`** if no target is selected, so it's read inside a new
+  `BuildTargetOrientationRotation` helper guarded by `HasTargetObject`, not in the unconditional
+  vector block at the top of `SetRotation` — falls back to holding current attitude (same pattern
+  as Maneuver/KillRot with nothing to point at).
+- **Star+/-**: the stale `// doesn't work` code comments (predating the LookRotation rewrite) have
+  been removed; the modes run through the same `BuildPointingRotation` as everything else and are
+  now wired to the UI, but still awaiting an in-game re-check.
+
+`MainWindowController` was also refactored: every mode toggle (global + all 24 direction/hover
+buttons) now goes through one shared `RegisterModeButton`/`ClearAllModeToggles` pair instead of a
+~15-line hand-copied handler per button. This wasn't just cleanup — the old hand-copied handlers
+had a latent bug where clicking an ORB button never cleared the Hover toggle, and there was no
+mechanism at all to clear toggles across tabs, which the new SURF/TGT/SPEC buttons needed anyway.
 
 ## Build / deploy
 
@@ -340,8 +363,10 @@ autopilot mod and may need none.
   publicized, so the private `_telemetryComponent` is off-limits — no reflection needed since
   `SimulationObject.Telemetry`, `Autopilot`, `SAS`, `mainBody`, `MOI` are all public). ORB offset
   math initially carried over verbatim (Heading→Pitch→Roll) but has since been found wrong and
-  replaced — see "Offset math" above. `KillRot`/`Maneuver` now implemented too. SURF/TGT/SPEC
-  cases kept but unwired (roadmap).
+  replaced — see "Offset math" above. `KillRot`/`Maneuver` now implemented too. **SURF/TGT/SPEC
+  are now fully implemented and wired** (`SurfaceHvelPlus/Minus`, `TargetMinus`, `TargetRvelPlus/
+  Minus`, `TargetParPlus/Minus` added; Star cases un-flagged) — see the "Remaining known gaps"
+  note above for the per-mode derivation. Not yet in-game tested.
 - `Code/Models/AttitudeMode.cs` — verbatim.
 - `Code/UI/{SceneController,MainWindowController}.cs` — ported; `SceneController.Initialize(uxml)`
   now takes the pre-loaded `VisualTreeAsset` (no more SW1.x static `AssetManager`).
@@ -372,3 +397,8 @@ object initializers. See [[langversion-csharp9]].
    as UXML dependencies, so only these two need explicit addresses.
 3. Run **Build for Editor** and test on a real vessel: ORB directions + Heading/Pitch/Roll offsets,
    engaged/disengaged via OFF.
+4. Test the new SURF/TGT/SPEC buttons: S VEL+/-, SURF, H VEL+/-, UP; TGT+/-, R VEL+/-, PAR+/- (the
+   latter two need a target selected - expect a hold-current-attitude fallback with no target
+   selected, not a crash); Star+/-. Also sanity-check that switching between tabs/modes correctly
+   clears the previously-active toggle everywhere (the `RegisterModeButton`/`ClearAllModeToggles`
+   refactor in `MainWindowController.cs`).
