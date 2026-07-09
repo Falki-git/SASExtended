@@ -84,6 +84,19 @@
                         <ui:Button text="180" display-tooltip-when-elided="true" name="z-second" class="attitude__button" style="width: 20px;"/>
                     </ui:VisualElement>
                 </ui:VisualElement>
+                <ui:VisualElement name="hover-controls" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 50%; padding-top: 0; padding-bottom: 5px; width: 100%; padding-left: 0; padding-right: 0; align-items: center; display: none;">
+                    <ui:VisualElement name="vertical-speed-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 30%; flex-direction: row; -unity-text-align: middle-left; padding-top: 2px; padding-bottom: 2px; align-items: center; width: 100%; justify-content: space-around; padding-right: 2px; padding-left: 2px;">
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="Heading" IsSmall="true" IsEnabled="true" IsToggled="true" name="x-toggle"/>
+                        <ui:FloatField value="0" name="x-value" class="attitude-input-field"/>
+                        <ui:Label tabindex="-1" text="m/s" display-tooltip-when-elided="true" style="font-size: 10px; padding-left: 0; padding-right: 0; padding-top: 0; padding-bottom: 0; width: 5px;"/>
+                        <ui:Button text="-" display-tooltip-when-elided="true" name="x-minus" class="attitude__button"/>
+                        <ui:Button text="+" display-tooltip-when-elided="true" name="x-plus" class="attitude__button"/>
+                        <ui:Button text="0" display-tooltip-when-elided="true" name="x-first" class="attitude__button"/>
+                    </ui:VisualElement>
+                    <ui:VisualElement name="cancel-horizontal-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 30%; flex-direction: row; -unity-text-align: middle-left; padding-bottom: 2px; padding-top: 2px; align-items: center; width: 100%; padding-left: 2px; padding-right: 2px; justify-content: space-around;">
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="Pitch" IsSmall="true" IsToggled="true" IsEnabled="true" name="cancel-horizontal-speed"/>
+                    </ui:VisualElement>
+                </ui:VisualElement>
             </ui:VisualElement>
             <ui:VisualElement name="tabs" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); max-height: 30px; min-height: 30px; flex-direction: row; align-items: flex-end;">
                 <SASExtended.UI.Controls.TabToggleControl focusable="true" Text="ORB" name="orb-tab" IsEnabled="true" IsToggled="true"/>
