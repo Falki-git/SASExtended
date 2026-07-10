@@ -46,6 +46,10 @@ namespace SASExtended.UI.Controls
         public const string UssClassName_Small_Text = UssClassName_Small + "__text";
         
         public const string UssClassName_Long = UssClassName + "--long";
+        
+        public const string UssClassName_Prograde = "prograde-background";
+        public const string UssClassName_Normal = "normal-background";
+        public const string UssClassName_Radial = "radial-background";
 
         public bool IsToggled { get; private set; }
         public bool IsEnabled { get; private set; }
@@ -302,6 +306,21 @@ namespace SASExtended.UI.Controls
             }
         }
 
+        public void SetSasColorMode(SasColorMode mode = SasColorMode.None)
+        {
+            _led.RemoveFromClassList(UssClassName_Prograde);
+            _led.RemoveFromClassList(UssClassName_Normal);
+            _led.RemoveFromClassList(UssClassName_Radial);
+            
+            switch (mode)
+            {
+                case SasColorMode.None: break;
+                case SasColorMode.Prograde: _led.AddToClassList(UssClassName_Prograde); break;
+                case SasColorMode.Normal: _led.AddToClassList(UssClassName_Normal); break;
+                case SasColorMode.Radial: _led.AddToClassList(UssClassName_Radial); break;
+            }
+        }
+
 #if SASX_UI_AUTHORING
         // Authoring-only UXML attribute surface for UI Builder (see the class comment). The attribute
         // names must match the legacy UxmlTraits attribute names exactly so the same UXML text works
@@ -372,5 +391,13 @@ namespace SASExtended.UI.Controls
             }
         }
 #endif
+    }
+
+    public enum SasColorMode
+    {
+        None,
+        Prograde,
+        Normal,
+        Radial
     }
 }

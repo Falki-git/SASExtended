@@ -1,6 +1,7 @@
 using System;
 using KSP.UI.Binding;
 using SASExtended.Managers;
+using SASExtended.Models;
 using SASExtended.UI.Controls;
 using UitkForKsp2.API;
 using UnityEngine;
@@ -14,6 +15,8 @@ namespace SASExtended.UI
 /// </summary>
 public class MainWindowController : MonoBehaviour
 {
+    private static readonly ReduxLib.Logging.ILogger _LOGGER = ReduxLib.ReduxLib.GetLogger("SASExtended|MainWindowController");
+
     // The UIDocument component of the window game object
     private UIDocument _window;
 
@@ -30,6 +33,9 @@ public class MainWindowController : MonoBehaviour
     private VisualElement _surfaceContainer;
     private VisualElement _targetContainer;
     private VisualElement _specialContainer;
+
+    private VisualElement _attitudeControlsContainer;
+    private VisualElement _hoverControlsContainer;
 
     private TabToggleControl _orbitTabToggle;
     private TabToggleControl _surfaceTabToggle;
@@ -61,6 +67,13 @@ public class MainWindowController : MonoBehaviour
     private SideToggleControl _starMinusToggle;
 
     private SideToggleControl _hoverToggle;
+
+    private SideToggleControl _hoverVerticalVelocityToggle;
+    private FloatField _hoverVerticalVelocityValue;
+    private Button _hoverVerticalVelocityMinus;
+    private Button _hoverVerticalVelocityPlus;
+    private Button _hoverVerticalVelocityZero;
+    private SideToggleControl _cancelHorizontalVelocityToggle;
 
     // Every mutually-exclusive mode toggle (global modes + all direction buttons across all tabs),
     // used by ClearAllModeToggles/RegisterModeButton so only one is ever shown toggled on.
@@ -100,6 +113,7 @@ public class MainWindowController : MonoBehaviour
         get => _isWindowOpen;
         set
         {
+            _LOGGER.LogDebug($"IsWindowOpen -> {value}");
             _isWindowOpen = value;
 
             // Set the display style of the root element to show or hide the window
@@ -158,12 +172,27 @@ public class MainWindowController : MonoBehaviour
         _specialTabToggle.RegisterCallback<ClickEvent>(OnSpecialTabClicked);
         _specialContainer = _root.Q<VisualElement>("spec-container");
 
+        _attitudeControlsContainer = _root.Q<VisualElement>("attitude-controls");
+        _hoverControlsContainer = _root.Q<VisualElement>("hover-controls");
+
         _progradeToggle = _root.Q<SideToggleControl>("prograde");
         _normalToggle = _root.Q<SideToggleControl>("normal");
         _radialInToggle = _root.Q<SideToggleControl>("radialin");
         _retrogradeToggle = _root.Q<SideToggleControl>("retrograde");
         _antinormalToggle = _root.Q<SideToggleControl>("antinormal");
         _radialOutToggle = _root.Q<SideToggleControl>("radialout");
+
+        // Each ORB button's LED color family is intrinsic to that button (prograde is always the
+        // prograde family, etc.) - assign it once here rather than on every click. The family class
+        // stays on the LED permanently; SASExtended.uss only paints it while the LED is also checked
+        // (see .side-toggle__led--checked.<family>-background), so unchecked/disabled buttons still
+        // show the normal gray.
+        _progradeToggle.SetSasColorMode(SasColorMode.Prograde);
+        _retrogradeToggle.SetSasColorMode(SasColorMode.Prograde);
+        _normalToggle.SetSasColorMode(SasColorMode.Normal);
+        _antinormalToggle.SetSasColorMode(SasColorMode.Normal);
+        _radialInToggle.SetSasColorMode(SasColorMode.Radial);
+        _radialOutToggle.SetSasColorMode(SasColorMode.Radial);
 
         _svelPlusToggle = _root.Q<SideToggleControl>("svelplus");
         _svelMinusToggle = _root.Q<SideToggleControl>("svelminus");
@@ -308,10 +337,54 @@ public class MainWindowController : MonoBehaviour
         });
 
 
-        // Get the close button from the window
+        // Purely a label ("VER VEL" is always active in hover, unlike Heading/Pitch/Roll there's no
+        // per-axis enable/disable concept for it) - keep it disabled so it can't be toggled off.
+        _hoverVerticalVelocityToggle = _hoverControlsContainer.Q<SideToggleControl>("ver-vel-toggle");
+        _hoverVerticalVelocityToggle.SetEnabled(false);
+
+        _hoverVerticalVelocityValue = _hoverControlsContainer.Q<FloatField>("ver-vel-value");
+        _hoverVerticalVelocityValue.RegisterValueChangedCallback(evt =>
+        {
+            SASManager.Instance.HoverTargetVerticalSpeed = evt.newValue;
+        });
+
+        _hoverVerticalVelocityMinus = _hoverControlsContainer.Q<Button>("ver-vel-minus");
+        _hoverVerticalVelocityMinus.RegisterCallback<ClickEvent>(evt =>
+        {
+            _hoverVerticalVelocityValue.value--;
+        });
+        _hoverVerticalVelocityPlus = _hoverControlsContainer.Q<Button>("ver-vel-plus");
+        _hoverVerticalVelocityPlus.RegisterCallback<ClickEvent>(evt =>
+        {
+            _hoverVerticalVelocityValue.value++;
+        });
+        _hoverVerticalVelocityZero = _hoverControlsContainer.Q<Button>("ver-vel-zero");
+        _hoverVerticalVelocityZero.RegisterCallback<ClickEvent>(evt =>
+        {
+            _hoverVerticalVelocityValue.value = 0;
+        });
+
+        _cancelHorizontalVelocityToggle = _hoverControlsContainer.Q<SideToggleControl>("cancel-horizontal-velocity");
+        _cancelHorizontalVelocityToggle.SetEnabled(true);
+        _cancelHorizontalVelocityToggle.SwitchToggleState(true, false);
+        _cancelHorizontalVelocityToggle.RegisterCallback<ClickEvent>(evt =>
+        {
+            SASManager.Instance.CancelHorizontalVelocity = _cancelHorizontalVelocityToggle.IsToggled;
+        });
+
+        // Match the containers' initial visibility/colors to the starting (non-hover, no-mode) state.
+        UpdatePanelForMode();
+        UpdateAttitudeColors();
+
+        // Get the close button from the window. Uses RegisterCallback<ClickEvent> rather than the
+        // `.clicked` action, matching every other clickable element in this file (x/y/z-minus/plus/
+        // first, tab toggles, etc.) rather than mixing two different click APIs.
         var closeButton = _root.Q<Button>("close-button");
-        // Add a click event handler to the close button
-        closeButton.clicked += () => IsWindowOpen = false;
+        closeButton.RegisterCallback<ClickEvent>(evt =>
+        {
+            _LOGGER.LogInfo("Close button clicked.");
+            IsWindowOpen = false;
+        });
     }
 
     #region Mode buttons
@@ -328,12 +401,22 @@ public class MainWindowController : MonoBehaviour
             {
                 ClearAllModeToggles(toggle);
                 setMode();
+
+                // OFF and KillRot have no control panel of their own (KillRot doesn't expose
+                // Heading/Pitch/Roll offsets - it just holds current attitude) - only a mode with
+                // real attitude controls should switch which panel (attitude vs. hover) is showing.
+                // Disengaging (the else branch below), OFF, and KillRot all leave whichever panel was
+                // already visible in place.
+                if (toggle != _offToggle && toggle != _killrotToggle)
+                    UpdatePanelForMode();
             }
             else
             {
                 _offToggle.SwitchToggleState(true, false);
                 SASManager.Instance.SetSASOff();
             }
+
+            UpdateAttitudeColors();
         });
     }
 
@@ -344,6 +427,55 @@ public class MainWindowController : MonoBehaviour
             if (toggle != except)
                 toggle.SwitchToggleState(false, false);
         }
+    }
+
+    // Hover is the only mode with its own control panel (vertical-speed target + horizontal-velocity
+    // cancel toggle) in place of the shared Heading/Pitch/Roll attitude-controls panel - swap which one
+    // is visible. Only called when a real mode is being engaged (see RegisterModeButton) - turning a
+    // mode off (falling back to OFF) intentionally leaves the previously-visible panel alone.
+    private void UpdatePanelForMode()
+    {
+        // SASManager.Instance is still null the very first time this runs: SceneController.Initialize
+        // creates this window (and synchronously runs OnEnable, which calls this) before
+        // SASExtendedPlugin creates the SASManager GameObject, and SASManager only assigns Instance in
+        // Start() (deferred to the next Unity lifecycle pass) even if that order were swapped. Treat
+        // "not ready yet" as non-hover rather than crashing OnEnable partway through (which used to
+        // silently skip every registration after this call, including the close button).
+        bool isHover = SASManager.Instance != null && SASManager.Instance.IsHoverActive;
+        _hoverControlsContainer.style.display = isHover ? DisplayStyle.Flex : DisplayStyle.None;
+        _attitudeControlsContainer.style.display = isHover ? DisplayStyle.None : DisplayStyle.Flex;
+    }
+
+    // Heading/Pitch/Roll share the color of whichever ORB family is currently active, so they read as
+    // "offsets from that direction" rather than a fixed neutral color. Modes outside the ORB tab (and
+    // no mode at all) have no family, so the toggles fall back to plain gray. Unlike UpdatePanelForMode,
+    // this runs on every mode change (including OFF) since it doesn't affect which panel is visible.
+    private void UpdateAttitudeColors()
+    {
+        // See UpdatePanelForMode for why SASManager.Instance can still be null here.
+        SasColorMode attitudeColorMode;
+        switch (SASManager.Instance == null ? AttitudeMode.None : SASManager.Instance.AttitudeMode)
+        {
+            case AttitudeMode.OrbitPrograde:
+            case AttitudeMode.OrbitRetrograde:
+                attitudeColorMode = SasColorMode.Prograde;
+                break;
+            case AttitudeMode.OrbitNormal:
+            case AttitudeMode.OrbitAntiNormal:
+                attitudeColorMode = SasColorMode.Normal;
+                break;
+            case AttitudeMode.OrbitRadialIn:
+            case AttitudeMode.OrbitRadialOut:
+                attitudeColorMode = SasColorMode.Radial;
+                break;
+            default:
+                attitudeColorMode = SasColorMode.None;
+                break;
+        }
+
+        _xToggle.SetSasColorMode(attitudeColorMode);
+        _yToggle.SetSasColorMode(attitudeColorMode);
+        _zToggle.SetSasColorMode(attitudeColorMode);
     }
 
     #endregion

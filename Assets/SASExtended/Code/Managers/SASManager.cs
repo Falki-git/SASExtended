@@ -18,6 +18,7 @@ public class SASManager : MonoBehaviour
     public double X = 0, Y = 0, Z = 0;
     public bool XEnabled = true, YEnabled = true, ZEnabled = true;
     public AttitudeMode AttitudeMode = AttitudeMode.None;
+    public bool IsHoverActive => AttitudeMode == AttitudeMode.Hover;
 
     public double RefreshInterval = 0;
     public double RefreshInterval_short = 0.02;
@@ -32,15 +33,21 @@ public class SASManager : MonoBehaviour
     // Patches/FlightInputHandlerThrottlePatch) each FixedUpdate. The tilt/throttle coupling is
     // inspired by MechJeb2's Translatron + ThrustController (KEEP_VERTICAL + TransKillH).
     //
-    // Holds HoverTargetVerticalSpeed directly (0 by default at engage), NOT the engagement altitude
-    // - whatever altitude the vessel ends up at once vertical speed reaches target is where it
-    // hovers. Tilt floor (HoverTiltAuthorityFloor) and max tilt angle (HoverTiltThrottleBudget) both
-    // self-tune off the vessel's own hover-equilibrium throttle (_throttleIntegral) instead of flat
-    // per-vessel guesses, so no per-vessel thrust/mass/TWR model is needed anywhere in this control
-    // law. Full round-by-round debugging history (why each piece of this exists, what broke without
-    // it) is in .claude/hover_mode_fixes.md - read it before changing this control law again.
+    // Holds HoverTargetVerticalSpeed directly, NOT the engagement altitude - whatever altitude the
+    // vessel ends up at once vertical speed reaches target is where it hovers. Tilt floor
+    // (HoverTiltAuthorityFloor) and max tilt angle (HoverTiltThrottleBudget) both self-tune off the
+    // vessel's own hover-equilibrium throttle (_throttleIntegral) instead of flat per-vessel guesses,
+    // so no per-vessel thrust/mass/TWR model is needed anywhere in this control law. Full round-by-
+    // round debugging history (why each piece of this exists, what broke without it) is in
+    // .claude/hover_mode_fixes.md - read it before changing this control law again.
     public float HoverThrottle;                    // 0..1, commanded throttle while hovering
-    public double HoverTargetVerticalSpeed;        // m/s, signed target vertical speed (reset to 0 on engage)
+    // m/s, signed target vertical speed. User-set via the hover-controls UI; deliberately NOT reset
+    // on engage (SetHover) - it should carry over from the last time hover was used, per user request.
+    public double HoverTargetVerticalSpeed;
+    // Whether hover's tilt logic actively nulls horizontal surface velocity. User-set via the
+    // hover-controls UI; deliberately NOT reset on engage (SetHover) - same persistence as
+    // HoverTargetVerticalSpeed above. Off means point straight up regardless of horizontal drift.
+    public bool CancelHorizontalVelocity = true;
     public double HoverThrottleKp = 0.05;          // immediate throttle per m/s of vertical-speed error
     public double HoverThrottleKi = 0.06;          // throttle trim per m/s of vertical-speed error per second
     public double HoverThrottleKd = 0.08;          // throttle damping per m/s^2 of vertical acceleration
@@ -296,7 +303,7 @@ public class SASManager : MonoBehaviour
                 double maxAngleFloor = horizontalSpeed * cosMaxTilt / sinMaxTilt;
 
                 Vector desired;
-                if (horizontalSpeed < 0.05)
+                if (!CancelHorizontalVelocity || horizontalSpeed < 0.05)
                 {
                     desired = up;
                 }
@@ -498,16 +505,18 @@ public class SASManager : MonoBehaviour
     public void SetSpecialStarMinus() => SetMode(AttitudeMode.SpecialStarMinus);
 
     /// <summary>
-    /// Engages hover: SAS holds the vessel thrust-up (tilting to null horizontal velocity) while the
-    /// throttle controller drives vertical velocity to <see cref="HoverTargetVerticalSpeed"/> (reset
-    /// to 0 here - "hold vertical speed", not altitude; see the field-block comment above).
+    /// Engages hover: SAS holds the vessel thrust-up (tilting to null horizontal velocity, unless
+    /// disabled via <see cref="CancelHorizontalVelocity"/>) while the throttle controller drives
+    /// vertical velocity to <see cref="HoverTargetVerticalSpeed"/> - "hold vertical speed", not
+    /// altitude; see the field-block comment above. Both are user-set values carried over from the
+    /// last time hover was engaged (deliberately NOT reset here) rather than forced back to a default
+    /// every engage.
     /// </summary>
     public void SetHover()
     {
         // Seed the throttle integrator with the current throttle so engaging hover doesn't jolt the
         // engines, and the derivative term with the current vertical speed so its first tick doesn't
         // see a spurious jump from 0.
-        HoverTargetVerticalSpeed = 0;
         _throttleIntegral = _vessel.flightCtrlState.mainThrottle;
         _hoverThrottleIntegralKnown = false;
         _hoverCosTilt = 1.0;
