@@ -1,5 +1,6 @@
 using System;
 using KSP.UI.Binding;
+using ReduxLib.Configuration;
 using SASExtended.Managers;
 using SASExtended.Models;
 using SASExtended.UI.Controls;
@@ -17,10 +18,19 @@ public class MainWindowController : MonoBehaviour
 {
     private static readonly ReduxLib.Logging.ILogger _LOGGER = ReduxLib.ReduxLib.GetLogger("SASExtended|MainWindowController");
 
+    // Config section/keys for persisting the window's last dragged-to position across sessions.
+    // A negative value means "never saved" - fall back to the default centered position.
+    private const string PositionConfigSection = "Window";
+    private const string PositionXConfigKey = "PositionX";
+    private const string PositionYConfigKey = "PositionY";
+
     // The UIDocument component of the window game object
     private UIDocument _window;
 
     private VisualElement _root;
+
+    private IConfigEntry _positionXEntry;
+    private IConfigEntry _positionYEntry;
 
     // The backing field for the IsWindowOpen property
     private bool _isWindowOpen;
@@ -147,7 +157,22 @@ public class MainWindowController : MonoBehaviour
         // Since we're cloning the UXML tree from a VisualTreeAsset, the actual root element is a TemplateContainer,
         // so we need to get the first child of the TemplateContainer to get our actual root VisualElement.
         _root = _window.rootVisualElement[0];
-        _root.CenterByDefault();
+
+        var config = SASExtendedPlugin.Instance.SWConfiguration;
+        _positionXEntry = config.Bind(PositionConfigSection, PositionXConfigKey, -1f,
+            "Saved window horizontal position in pixels. -1 means the window has never been moved yet.");
+        _positionYEntry = config.Bind(PositionConfigSection, PositionYConfigKey, -1f,
+            "Saved window vertical position in pixels. -1 means the window has never been moved yet.");
+
+        var savedX = (float)_positionXEntry.Value;
+        var savedY = (float)_positionYEntry.Value;
+        if (savedX >= 0f && savedY >= 0f)
+            _root.SetDefaultPosition(_ => new Vector2(savedX, savedY));
+        else
+            _root.CenterByDefault();
+
+        // Persist the position once a drag finishes (dragging is the only way it ever changes).
+        _root.RegisterCallback<PointerUpEvent>(evt => SaveWindowPosition());
 
         _offToggle = _root.Q<SideToggleControl>("off");
         _offToggle.SetEnabled(true);
@@ -385,6 +410,13 @@ public class MainWindowController : MonoBehaviour
             _LOGGER.LogInfo("Close button clicked.");
             IsWindowOpen = false;
         });
+    }
+
+    private void SaveWindowPosition()
+    {
+        _positionXEntry.Value = _root.resolvedStyle.left;
+        _positionYEntry.Value = _root.resolvedStyle.top;
+        SASExtendedPlugin.Instance.SWConfiguration.Save();
     }
 
     #region Mode buttons
