@@ -12,7 +12,7 @@ verbatim-port constraint (new controls added, nothing existing restyled — see
 
 ## Features
 
-### 1. Finish the Hover UI — vertical-speed setpoint + horizontal-cancel toggle
+### (DONE) 1. Finish the Hover UI — vertical-speed setpoint + horizontal-cancel toggle
 
 `HoverTargetVerticalSpeed` is already the live setpoint the throttle law holds
 (`SASManager.cs`), but nothing writes to it except the reset-to-0 on engage, and the
@@ -51,7 +51,7 @@ arbitrary reference-frame + direction combinations (see `MechJebModuleSmartASS.c
 local MechJeb2 mirror). Natural next feature milestone after in-game verification of
 SURF/TGT/SPEC.
 
-### 6. Persist settings via `SWConfiguration`
+### (DONE) 6. Persist settings via `SWConfiguration`	
 
 All hover gains, refresh intervals, and offsets are hardcoded public fields; window position
 and last H/P/R values reset every session. `KerbalMod` already provides `SWConfiguration`

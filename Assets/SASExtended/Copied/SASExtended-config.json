@@ -1,0 +1,10 @@
+{
+    "Window": {
+        // Saved window horizontal position in pixels. -1 means the window has never been moved yet.
+        // Default: 642.75
+        "PositionX": 642.75,
+        // Saved window vertical position in pixels. -1 means the window has never been moved yet.
+        // Default: 765
+        "PositionY": 765.0
+    }
+}
