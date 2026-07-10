@@ -1,9 +1,9 @@
 using System;
 using KSP.UI.Binding;
-using ReduxLib.Configuration;
 using SASExtended.Managers;
 using SASExtended.Models;
 using SASExtended.UI.Controls;
+using SASExtended.Utilities;
 using UitkForKsp2.API;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -18,19 +18,13 @@ public class MainWindowController : MonoBehaviour
 {
     private static readonly ReduxLib.Logging.ILogger _LOGGER = ReduxLib.ReduxLib.GetLogger("SASExtended|MainWindowController");
 
-    // Config section/keys for persisting the window's last dragged-to position across sessions.
-    // A negative value means "never saved" - fall back to the default centered position.
-    private const string PositionConfigSection = "Window";
-    private const string PositionXConfigKey = "PositionX";
-    private const string PositionYConfigKey = "PositionY";
-
     // The UIDocument component of the window game object
     private UIDocument _window;
 
     private VisualElement _root;
 
-    private IConfigEntry _positionXEntry;
-    private IConfigEntry _positionYEntry;
+    private float _lastStatusUpdateTime = float.NegativeInfinity;
+    private Label _statusLabel;
 
     // The backing field for the IsWindowOpen property
     private bool _isWindowOpen;
@@ -116,33 +110,47 @@ public class MainWindowController : MonoBehaviour
 
 
     /// <summary>
-    /// The state of the window. Setting this value will open or close the window.
+    /// The state of the window. Setting this value will open or close the window, and persists the
+    /// new state as the player's chosen default (Settings.WindowIsOpen) so it can be restored the
+    /// next time flight is entered. For a scene transition forcing the window open/closed - which
+    /// must NOT overwrite that persisted choice - use <see cref="SetOpenWithoutPersisting"/> instead.
     /// </summary>
     public bool IsWindowOpen
     {
         get => _isWindowOpen;
         set
         {
-            _LOGGER.LogDebug($"IsWindowOpen -> {value}");
-            _isWindowOpen = value;
-
-            // Set the display style of the root element to show or hide the window
-            _root.style.display = value ? DisplayStyle.Flex : DisplayStyle.None;
-            // Alternatively, you can deactivate the window game object to close the window and stop it from updating,
-            // which is useful if you perform expensive operations in the window update loop. However, this will also
-            // mean you will have to re-register any event handlers on the window elements when re-enabled in OnEnable.
-            // gameObject.SetActive(value);
-
-            // Update the Flight AppBar button state
-            GameObject.Find(SASExtendedPlugin.ToolbarFlightButtonID)
-                ?.GetComponent<UIValue_WriteBool_Toggle>()
-                ?.SetValue(value);
-
-            // Update the OAB AppBar button state
-            GameObject.Find(SASExtendedPlugin.ToolbarOabButtonID)
-                ?.GetComponent<UIValue_WriteBool_Toggle>()
-                ?.SetValue(value);
+            SetOpenWithoutPersisting(value);
+            Settings.WindowIsOpen.Value = value;
+            SASExtendedPlugin.Instance.SWConfiguration.Save();
         }
+    }
+
+    // Applies the open/closed visual state only - doesn't touch Settings.WindowIsOpen. Used by the
+    // scene-transition logic (SASExtendedPlugin.OnGameStateChangedMessage) to hide the window when
+    // leaving flight/Map3D and restore it when re-entering, without clobbering the player's last
+    // explicitly-chosen open/closed preference.
+    public void SetOpenWithoutPersisting(bool value)
+    {
+        _LOGGER.LogDebug($"IsWindowOpen -> {value}");
+        _isWindowOpen = value;
+
+        // Set the display style of the root element to show or hide the window
+        _root.style.display = value ? DisplayStyle.Flex : DisplayStyle.None;
+        // Alternatively, you can deactivate the window game object to close the window and stop it from updating,
+        // which is useful if you perform expensive operations in the window update loop. However, this will also
+        // mean you will have to re-register any event handlers on the window elements when re-enabled in OnEnable.
+        // gameObject.SetActive(value);
+
+        // Update the Flight AppBar button state
+        GameObject.Find(SASExtendedPlugin.ToolbarFlightButtonID)
+            ?.GetComponent<UIValue_WriteBool_Toggle>()
+            ?.SetValue(value);
+
+        // Update the OAB AppBar button state
+        GameObject.Find(SASExtendedPlugin.ToolbarOabButtonID)
+            ?.GetComponent<UIValue_WriteBool_Toggle>()
+            ?.SetValue(value);
     }
 
     /// <summary>
@@ -158,18 +166,15 @@ public class MainWindowController : MonoBehaviour
         // so we need to get the first child of the TemplateContainer to get our actual root VisualElement.
         _root = _window.rootVisualElement[0];
 
-        var config = SASExtendedPlugin.Instance.SWConfiguration;
-        _positionXEntry = config.Bind(PositionConfigSection, PositionXConfigKey, -1f,
-            "Saved window horizontal position in pixels. -1 means the window has never been moved yet.");
-        _positionYEntry = config.Bind(PositionConfigSection, PositionYConfigKey, -1f,
-            "Saved window vertical position in pixels. -1 means the window has never been moved yet.");
-
-        var savedX = (float)_positionXEntry.Value;
-        var savedY = (float)_positionYEntry.Value;
+        var savedX = Settings.WindowPositionX.Value;
+        var savedY = Settings.WindowPositionY.Value;
         if (savedX >= 0f && savedY >= 0f)
             _root.SetDefaultPosition(_ => new Vector2(savedX, savedY));
         else
             _root.CenterByDefault();
+
+        _statusLabel = _root.Q<Label>("status");
+        _statusLabel.text = string.Empty;
 
         // Persist the position once a drag finishes (dragging is the only way it ever changes).
         _root.RegisterCallback<PointerUpEvent>(evt => SaveWindowPosition());
@@ -414,9 +419,77 @@ public class MainWindowController : MonoBehaviour
 
     private void SaveWindowPosition()
     {
-        _positionXEntry.Value = _root.resolvedStyle.left;
-        _positionYEntry.Value = _root.resolvedStyle.top;
+        Settings.WindowPositionX.Value = _root.resolvedStyle.left;
+        Settings.WindowPositionY.Value = _root.resolvedStyle.top;
         SASExtendedPlugin.Instance.SWConfiguration.Save();
+    }
+
+    // Gated on IsWindowOpen and the StatusLoggingEnabled config toggle, so the status readout does no
+    // work at all while the window is closed or the feature is disabled. Both settings are read live
+    // (not cached) so toggling either in the in-game Settings -> Mods menu takes effect immediately.
+    private void Update()
+    {
+        if (!IsWindowOpen || !Settings.StatusLoggingEnabled.Value)
+            return;
+
+        if (Time.time - _lastStatusUpdateTime < Settings.StatusRefreshInterval.Value)
+            return;
+        _lastStatusUpdateTime = Time.time;
+
+        UpdateStatusLabel();
+    }
+
+    // Status content depends on the active mode (enhancement_roadmap.md item 3): KillRot and Hover
+    // don't point anywhere, so an angle-to-target isn't meaningful for either and they get their own
+    // bespoke readouts; every other mode (including Node/TGT PAR, even while their fallback holds
+    // current attitude - see SASManager.SetRotation) shares the generic angle-to-target + free-axis
+    // readout, since they all go through the same BuildPointingRotation/BuildTargetOrientationRotation
+    // pipeline.
+    private void UpdateStatusLabel()
+    {
+        var sas = SASManager.Instance;
+        if (sas == null || sas.AttitudeMode == AttitudeMode.None)
+        {
+            _statusLabel.text = string.Empty;
+            return;
+        }
+
+        switch (sas.AttitudeMode)
+        {
+            case AttitudeMode.KillRot:
+                _statusLabel.text = $"ω: {sas.GetAngularVelocityDegPerSec():F1}°/s";
+                break;
+
+            case AttitudeMode.Hover:
+                _statusLabel.text = sas.CancelHorizontalVelocity
+                    ? $"V-SPD: {FormatSpeed(sas.GetHoverVerticalSpeed())}  H-SPD: {FormatSpeed(sas.GetHoverHorizontalSpeed())}"
+                    : $"V-SPD: {FormatSpeed(sas.GetHoverVerticalSpeed())}  THR: {sas.HoverThrottle * 100:F0}%";
+                break;
+
+            default:
+                var freeAxes = "";
+                if (!sas.XEnabled) freeAxes += "H";
+                if (!sas.YEnabled) freeAxes += "P";
+                if (!sas.ZEnabled) freeAxes += "R";
+                _statusLabel.text = freeAxes.Length > 0
+                    ? $"Angle to target: {sas.GetAngleToRotation():F1}°  Free: {freeAxes}"
+                    : $"Angle to target: {sas.GetAngleToRotation():F1}°";
+                break;
+        }
+    }
+
+    // Speed readouts switch precision/unit by magnitude so the number stays readable at both hover
+    // (single digits) and orbital (multi-km/s) scales: <100 m/s keeps one decimal, [100,1000) m/s drops
+    // to whole numbers, >=1000 m/s switches to km/s. Sign is preserved as-is (only the magnitude drives
+    // which bucket is picked), so negative speeds format the same way as positive ones.
+    private static string FormatSpeed(double speedMs)
+    {
+        var abs = Math.Abs(speedMs);
+        if (abs >= 1000.0)
+            return $"{speedMs / 1000.0:F1} km/s";
+        if (abs >= 100.0)
+            return $"{speedMs:F0} m/s";
+        return $"{speedMs:F1} m/s";
     }
 
     #region Mode buttons

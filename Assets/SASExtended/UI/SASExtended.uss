@@ -66,7 +66,7 @@
 
 .main-gui {
     width: 200px;
-    height: 280px;
+    height: 300px;
     flex-direction: column-reverse;
 }
 
@@ -131,17 +131,6 @@
     border-right-color: var(--border-active-green);
     border-top-color: var(--border-active-green);
     border-bottom-color: var(--border-active-green);
-}
-
-.footer {
-    flex-grow: 1;
-    background-color: rgba(0, 0, 0, 0);
-    width: 100%;
-    align-items: center;
-    flex-direction: row;
-    max-height: 25px;
-    min-height: 25px;
-    display: none;
 }
 
 .title__container {
@@ -503,26 +492,6 @@
     opacity: 1;
 }
 
-.resize-handle__container {
-    flex-grow: 0;
-    width: 32px;
-    height: 32px;
-    position: absolute;
-    right: -10px;
-    bottom: -10px;
-    display: none;
-}
-
-.resize-handle {
-    flex-grow: 1;
-    background-image: url("project://database/Assets/SASExtended/UI/Images/Icons/ELE-Panel-Handle.png?fileID=21300000&guid=59a0e8b5ecc8a374f891341b8927a814&type=3#ELE-Panel-Handle");
-    max-height: 8px;
-    max-width: 8px;
-    left: 10px;
-    top: 10px;
-    -unity-background-image-tint-color: var(--background-lightgray-4);
-}
-
 .attitude__button {
     font-size: 12px;
     height: 80%;
@@ -718,6 +687,23 @@
     padding-bottom: 0;
 }
 
+.velocity-input-field {
+    padding-left: 0;
+    width: 40px;
+    height: 18px;
+    margin-left: 0;
+    margin-right: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+    font-size: 12px;
+    border-top-left-radius: 2px;
+    border-bottom-left-radius: 2px;
+    border-top-right-radius: 2px;
+    border-bottom-right-radius: 2px;
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
 .side-toggle__led--checked.prograde-background {
     background-color: var(--prograde-green);
 }
@@ -728,4 +714,23 @@
 
 .side-toggle__led--checked.radial-background {
     background-color: var(--radial-blue);
+}
+
+.footer {
+    flex-grow: 1;
+    background-color: rgba(0, 0, 0, 0);
+    width: 100%;
+    align-items: center;
+    flex-direction: row;
+    display: none;
+    height: 20px;
+    justify-content: flex-start;
+    -unity-text-align: middle-left;
+    padding-left: 5px;
+    letter-spacing: -10px;
+    font-size: 10px;
+}
+
+.status-label {
+    color: var(--yellowish);
 }

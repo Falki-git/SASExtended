@@ -616,7 +616,10 @@ public class SASManager : MonoBehaviour
         return body;
     }
 
-    private double GetAngleToRotation()
+    // Public: also read by MainWindowController for the status readout's generic angle-to-target line
+    // (every pointing mode - ORB/SURF/TGT/SPEC/Node/TGT PAR - shares this, per enhancement_roadmap.md
+    // item 3; KillRot/Hover don't point anywhere, so they use their own readouts below instead).
+    public double GetAngleToRotation()
     {
         // _rotation.coordinateSystem is always our shared "referenceFrame" (see SetRotation), which is
         // generally NOT the same frame as _vessel.transform.coordinateSystem - comparing their raw
@@ -626,6 +629,24 @@ public class SASManager : MonoBehaviour
         var currentRotation = _rotation.localRotation * Vector3d.up;
         return Vector3d.Angle(currentAttitude.vector, currentRotation);
     }
+
+    // KillRot doesn't point anywhere (see the AttitudeMode.KillRot case in SetRotation), so an
+    // angle-to-target isn't meaningful there - angular velocity magnitude shows how fast the vessel is
+    // still tumbling instead, trending to 0 as it settles. KSP2's physics angular velocity is
+    // radians/second (Unity Rigidbody convention); converted to degrees/second to match every other
+    // angle in this file.
+    public double GetAngularVelocityDegPerSec()
+    {
+        if (_vessel == null)
+            return 0;
+        return _vessel.AngularVelocityMassAvg.relativeAngularVelocity.magnitude * (180.0 / Math.PI);
+    }
+
+    // Actual current vertical/horizontal surface speed for the Hover status readout - the same
+    // telemetry UpdateHoverThrottle's control law and tilt calc already use, just via the plain
+    // VesselComponent accessors since this is read independently of the control loop's own cadence.
+    public double GetHoverVerticalSpeed() => _vessel?.VerticalSrfSpeed ?? 0;
+    public double GetHoverHorizontalSpeed() => _vessel?.HorizontalSrfSpeed ?? 0;
 
     private void SetRefreshInterval()
     {

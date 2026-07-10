@@ -1,9 +1,9 @@
 <ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" xsi="http://www.w3.org/2001/XMLSchema-instance" engine="UnityEngine.UIElements" editor="UnityEditor.UIElements" noNamespaceSchemaLocation="../../../UIElementsSchema/UIElements.xsd" editor-extension-mode="False">
     <Style src="project://database/Assets/SASExtended/UI/SASExtended.uss?fileID=7433441132597879392&amp;guid=4e53402c9d91b0c409b2983ca8b94a72&amp;type=3#SASExtended"/>
     <ui:VisualElement name="root" class="root main-gui">
-        <ui:VisualElement name="footer" class="footer">
-            <ui:VisualElement name="legend__container" class="legend__container"/>
-            <ui:Label tabindex="-1" text="Overlay: ON" display-tooltip-when-elided="true" name="notification" picking-mode="Ignore" class="notification"/>
+        <ui:VisualElement name="footer" class="footer" style="display: flex;">
+            <ui:Label tabindex="-1" text="Overlay: ON" display-tooltip-when-elided="true" name="notification" picking-mode="Ignore" class="notification" style="display: none;"/>
+            <ui:Label text="" name="status" class="status-label" style="display: flex;"/>
         </ui:VisualElement>
         <ui:VisualElement name="middle-container" class="middle-container">
             <ui:VisualElement name="body" class="body">
@@ -55,7 +55,7 @@
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="STAR\n-" IsBig="true" IsEnabled="true" name="starminus"/>
                     </ui:VisualElement>
                 </ui:VisualElement>
-                <ui:VisualElement name="attitude-controls" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 50%; padding-top: 0; padding-bottom: 5px; width: 100%; padding-left: 0; padding-right: 0; align-items: center; display: flex;">
+                <ui:VisualElement name="attitude-controls" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 50%; padding-top: 0; padding-bottom: 5px; width: 100%; padding-left: 0; padding-right: 0; align-items: center;">
                     <ui:VisualElement name="heading-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 30%; flex-direction: row; -unity-text-align: middle-left; padding-top: 2px; padding-bottom: 2px; align-items: center; width: 100%; justify-content: space-around; padding-right: 2px; padding-left: 2px;">
                         <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="HEADING" IsSmall="true" IsEnabled="true" IsToggled="true" name="x-toggle"/>
                         <ui:FloatField value="0" name="x-value" class="attitude-input-field"/>
@@ -86,15 +86,15 @@
                 </ui:VisualElement>
                 <ui:VisualElement name="hover-controls" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 50%; padding-top: 0; padding-bottom: 5px; width: 100%; padding-left: 0; padding-right: 0; align-items: center; display: none;">
                     <ui:VisualElement name="first-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 30%; flex-direction: row; -unity-text-align: middle-left; padding-top: 2px; padding-bottom: 2px; align-items: center; width: 100%; justify-content: space-around; padding-right: 2px; padding-left: 2px;">
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="VER VEL" IsSmall="true" IsEnabled="true" IsToggled="true" name="ver-vel-toggle"/>
-                        <ui:FloatField value="0" name="ver-vel-value" class="attitude-input-field"/>
-                        <ui:Label tabindex="-1" text="m/s" display-tooltip-when-elided="true" style="font-size: 10px; padding-left: 0; padding-right: 0; padding-top: 0; padding-bottom: 0; width: 24px;"/>
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="V-SPD" IsSmall="true" IsEnabled="true" IsToggled="true" name="ver-vel-toggle"/>
+                        <ui:FloatField value="0" name="ver-vel-value" class="velocity-input-field"/>
+                        <ui:Label tabindex="-1" text="m/s" display-tooltip-when-elided="true" style="font-size: 10px; padding-left: 0; padding-right: 0; padding-top: 0; padding-bottom: 0; width: 22px;"/>
                         <ui:Button text="-" display-tooltip-when-elided="true" name="ver-vel-minus" class="attitude__button"/>
                         <ui:Button text="+" display-tooltip-when-elided="true" name="ver-vel-plus" class="attitude__button"/>
                         <ui:Button text="0" display-tooltip-when-elided="true" name="ver-vel-zero" class="attitude__button"/>
                     </ui:VisualElement>
                     <ui:VisualElement name="second-row" style="flex-grow: 1; background-color: rgba(0, 0, 0, 0); height: 30%; flex-direction: row; -unity-text-align: middle-left; padding-bottom: 2px; padding-top: 2px; align-items: center; width: 100%; padding-left: 2px; padding-right: 2px; justify-content: space-around;">
-                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="CANCEL HOV VEL" IsSmall="true" IsToggled="true" IsEnabled="true" name="cancel-horizontal-velocity" IsLong="true"/>
+                        <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="CANCEL H-SPD" IsSmall="true" IsToggled="true" IsEnabled="true" name="cancel-horizontal-velocity" IsLong="true"/>
                     </ui:VisualElement>
                 </ui:VisualElement>
             </ui:VisualElement>
@@ -120,9 +120,6 @@
                     <ui:VisualElement name="close-button__background" class="close-button__background" style="background-image: url(&quot;project://database/Assets/SASExtended/UI/Images/Icons/ICO-Close-med.png?fileID=2800000&amp;guid=456a2a06d20612f4e96d2227e8ca601d&amp;type=3#ICO-Close-med&quot;);"/>
                 </ui:Button>
             </ui:VisualElement>
-        </ui:VisualElement>
-        <ui:VisualElement name="resize-handle__container" class="resize-handle__container">
-            <ui:VisualElement name="resize-handle" class="resize-handle" style="-unity-background-image-tint-color: rgb(255, 255, 255); left: 13px; top: 13px; max-width: 7px; max-height: 7px; background-image: url(&quot;project://database/Assets/SASExtended/UI/Images/Icons/ELE-Panel-Handle.png?fileID=2800000&amp;guid=59a0e8b5ecc8a374f891341b8927a814&amp;type=3#ELE-Panel-Handle&quot;);"/>
         </ui:VisualElement>
     </ui:VisualElement>
 </ui:UXML>
