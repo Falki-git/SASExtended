@@ -174,49 +174,21 @@ every pointing mode (not just SURF as originally speculated below — no partial
 ### Hover mode (SPEC → Hov) — throttle control
 
 Unlike every other mode (which only commands orientation via `LockRotation`), **Hover also drives the
-throttle**. It points the vessel thrust-axis up, tilted against horizontal surface velocity to null it,
-and modulates throttle to cancel vertical velocity and hold the engagement altitude
-(`AltitudeFromSurface`). The throttle law (`SASManager.UpdateHoverThrottle`) is a P + integral controller
-on vertical-speed error; the integral self-tunes to the vessel's hover throttle so **no per-vessel
-thrust/mass/TWR model is needed**. Gains are public tunables (`Hover*` fields on `SASManager`).
+throttle**. It points the vessel thrust-axis up, blended against horizontal surface velocity to null it,
+and modulates throttle to hold `HoverTargetVerticalSpeed` (a signed m/s setpoint, reset to 0 on every
+engage - **not** an altitude lock; see below for why). The throttle law
+(`SASManager.UpdateHoverThrottle`) is a full P+I+D controller on vertical-speed error; the integral
+self-tunes to the vessel's hover throttle so **no per-vessel thrust/mass/TWR model is needed**. Gains
+are public tunables (`Hover*` fields on `SASManager`).
 
-### Hover mode — known bugs (found via `Player.log` analysis, not yet fixed)
+### Hover mode — instability fixes
 
-Diagnosed 2026-07-08 from real in-game `Player.log` captures (the log's path is in memory —
-[[external-sources]] — read it after any future in-game test instead of guessing). Both bugs are in
-the horizontal-velocity-cancellation path; the altitude/vertical-hold half of the throttle law
-(`UpdateHoverThrottle`) works correctly when tested from a proper near-hover engage (steady
-altitude within ~0.3m of target, throttle settling ~0.20, not saturated). **Deferred — to be
-tackled together with the planned rework below, not fixed as one-off patches.**
-
-1. **Throttle can starve all horizontal-correction authority.** `UpdateHoverThrottle`'s P+I law
-   zeroes throttle whenever actual vertical speed exceeds the target rate (correct in isolation —
-   you can't thrust to *increase* descent) but that also zeroes thrust entirely, so the Hover
-   attitude logic's tilt has literally no force to redirect. Reproduced by engaging Hover while
-   still climbing at ~80 m/s right after an ascent: `HoverThrottle` stayed pinned at `0.000` for the
-   whole session while `horizontalSpeed` grew from ~47 to ~300 m/s uncorrected (`[Hover/throttle]`
-   log: `actualVSpeed=83.35m/s ... throttlePreClamp=-4.909[SATURATED] HoverThrottle=0.000`). Not
-   representative of the intended landing/hover-descent use case, but a real edge case.
-2. **Horizontal-velocity cancellation oscillates instead of converging (confirmed even in a proper
-   near-hover retest).** Parsing a full session's `[Hover/attitude]` log lines (2191 samples)
-   shows `horizontalSpeed` swinging repeatedly between ~1 and ~24 m/s with a ~9–10s period, and —
-   more tellingly — the horizontal velocity *direction* rotates through a full circle each cycle
-   instead of shrinking toward zero (e.g. `horiz=(-12.0,11.2,-3.3)` → near-zero → `horiz=(-2.2,
-   -15.6,-0.5)` → peak → near-zero → `horiz=(15.1,13.0,4.0)`, repeating). `cappedTiltTangent` was
-   `SATURATED` at the 30° cap (`HoverMaxTilt`) in 2186/2191 samples — with the default
-   `HoverHorizontalGain=0.5`, anything above ~1.15 m/s horizontal speed pins tilt at max, so the
-   control is effectively bang-bang (always max-tilt toward instantaneous anti-velocity), not truly
-   proportional. Likely cause: pure-proportional, no-damping control reacting to the *current*
-   velocity combined with real attitude-slew lag — by the time the vessel's tilt catches up to a
-   commanded direction, the velocity has moved on, so the correction systematically overshoots past
-   zero into a new direction each cycle (a classic lagged-proportional-control limit cycle) rather
-   than actually killing the drift.
-
-**Planned direction (per the user, not yet scheduled):** Hover is getting a signed **target
-vertical velocity** input (replacing/extending pure altitude-hold) and a **toggle for whether to
-cancel horizontal velocity at all**. Fix both bugs above as part of that rework rather than as
-isolated patches — bug 1 in particular is a coordination problem between the throttle law and the
-tilt law that the redesign will touch anyway. See [[hover-roadmap]] for the fuller memory record.
+Hover mode went through an 11-round debugging cycle on branch `hover-fix` (2026-07-09/2026-07-10),
+fixing throttle bang-bang, tilt-cap, and gravity-compensation bugs across low-gravity (Minmus) and
+high-gravity/high-TWR (Kerbin, Tylo) test cases, plus removing an unsafe "escape valve" subsystem.
+**Full round-by-round diagnosis and fix log:** [`hover_mode_fixes.md`](hover_mode_fixes.md). The
+only still-pending item: a UI toggle for whether to cancel horizontal velocity at all (no UXML
+control wired up yet).
 
 **Why a Harmony patch is required for throttle:** the stock `FlightInputHandler` keeps a persistent
 `_flightCtrlState.mainThrottle` and pushes it to the active vessel every FixedUpdate, so setting throttle

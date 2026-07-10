@@ -27,21 +27,51 @@ public class SASManager : MonoBehaviour
     public double AngleToRotation_large = 30;
 
     // --- Hover control ---------------------------------------------------------------------------
-    // In Hover mode the manager both points the vessel (thrust axis up, tilted against horizontal
-    // velocity) AND drives the throttle. The throttle value is read back by the Harmony patch on
-    // FlightInputHandler (see Patches/FlightInputHandlerThrottlePatch) each FixedUpdate.
-    public float HoverThrottle;                 // 0..1, commanded throttle while hovering
-    public double HoverAltitudeGain = 0.5;      // target vertical speed (m/s) per metre of altitude error
-    public double HoverMaxClimbRate = 20;       // m/s cap on commanded climb
-    public double HoverMaxDescentRate = 20;     // m/s cap on commanded descent
-    public double HoverThrottleKp = 0.05;       // immediate throttle per m/s of vertical-speed error
-    public double HoverThrottleKi = 0.10;       // throttle trim per m/s of vertical-speed error per second
-    public double HoverHorizontalGain = 0.5;    // tilt tangent per m/s of horizontal speed
-    public double HoverMaxTilt = 30;            // deg cap on the tilt used to kill horizontal velocity
+    // Hover both points the vessel (thrust axis up, tilted to null horizontal velocity) and drives
+    // the throttle - the throttle value is read back by the Harmony patch on FlightInputHandler (see
+    // Patches/FlightInputHandlerThrottlePatch) each FixedUpdate. The tilt/throttle coupling is
+    // inspired by MechJeb2's Translatron + ThrustController (KEEP_VERTICAL + TransKillH).
+    //
+    // Holds HoverTargetVerticalSpeed directly (0 by default at engage), NOT the engagement altitude
+    // - whatever altitude the vessel ends up at once vertical speed reaches target is where it
+    // hovers. Tilt floor (HoverTiltAuthorityFloor) and max tilt angle (HoverTiltThrottleBudget) both
+    // self-tune off the vessel's own hover-equilibrium throttle (_throttleIntegral) instead of flat
+    // per-vessel guesses, so no per-vessel thrust/mass/TWR model is needed anywhere in this control
+    // law. Full round-by-round debugging history (why each piece of this exists, what broke without
+    // it) is in .claude/hover_mode_fixes.md - read it before changing this control law again.
+    public float HoverThrottle;                    // 0..1, commanded throttle while hovering
+    public double HoverTargetVerticalSpeed;        // m/s, signed target vertical speed (reset to 0 on engage)
+    public double HoverThrottleKp = 0.05;          // immediate throttle per m/s of vertical-speed error
+    public double HoverThrottleKi = 0.06;          // throttle trim per m/s of vertical-speed error per second
+    public double HoverThrottleKd = 0.08;          // throttle damping per m/s^2 of vertical acceleration
+    // Rate limit on the commanded throttle itself - a powerful engine turns even a brief throttle
+    // burst into a large acceleration spike, which HoverThrottleKd then reacts to violently (a
+    // classic bang-bang/relay oscillation). TWR-agnostic by construction: the commanded value can
+    // only change this fast per second regardless of what the P/I/D formula asks for. See
+    // hover_mode_fixes.md round 8 for the failure this fixes.
+    public double HoverThrottleMaxRate = 2.0;      // max |Δthrottle|/second - 0->100% takes at least 0.5s
+    // Low-pass time constant for thrustDrivenAccel before it's multiplied by HoverThrottleKd - a raw
+    // single-frame finite-difference derivative is noisy even with the rate limiter above damping its
+    // effect on the actual engine. See hover_mode_fixes.md round 9.
+    public double HoverThrottleAccelFilterTime = 0.2; // seconds - higher smooths more but reacts slower to genuine trends
+    public double HoverTiltAuthorityFloor = 10;    // m/s - nominal floor when hover throttle == HoverTiltReferenceThrottle
+    public double HoverTiltReferenceThrottle = 0.2; // throttle fraction the nominal floor above assumes; floor scales down for more powerful engines and up for weaker ones
+    public double HoverTiltAuthorityFloorMin = 2;  // m/s - safety floor so tilt can't go near-90 deg before the throttle integral has converged
+    // Hard ceiling on the normal blend's tilt angle, self-tuned off _throttleIntegral (the same
+    // self-tuned hover-equilibrium throttle the floor above uses) and HoverTiltThrottleBudget: the
+    // max tilt angle is whatever angle would make holding HoverTargetVerticalSpeed cost exactly that
+    // fraction of total throttle, leaving the rest as headroom. A flat angle is either unsafe on a
+    // low-TWR vessel (not enough reserved vertical thrust) or overly conservative on a high-TWR one
+    // (real spare thrust left unused) - self-tuning avoids guessing which. See hover_mode_fixes.md
+    // rounds 5, 7, and 10 for the crashes/over-conservatism this fixes and why the budget is 0.9.
+    public double HoverTiltThrottleBudget = 0.9;    // fraction of throttle the tilt cap will let holding vertical speed cost, leaving the rest as headroom
+    public double HoverMaxTiltAngleFallback = 45;   // deg - used only before _throttleIntegral has any data yet (conservative, TWR unknown)
 
-    private double _hoverTargetAltitude;
     private double _throttleIntegral;
+    private bool _hoverThrottleIntegralKnown;
     private double _hoverCosTilt = 1.0;
+    private double _lastVerticalSpeedForDerivative;
+    private double _filteredThrustDrivenAccel;
     private double _lastHoverLogTime;
 
     private static readonly ReduxLib.Logging.ILogger _LOGGER = ReduxLib.ReduxLib.GetLogger("SASExtended|SASManager");
@@ -232,23 +262,55 @@ public class SASManager : MonoBehaviour
 
             case AttitudeMode.Hover:
             {
-                // Desired thrust direction: local "up" (away from the planet), tilted against the
-                // horizontal surface-velocity component so that thrust bleeds off horizontal motion.
+                // Desired thrust direction: local "up", blended against the horizontal
+                // surface-velocity component so thrust bleeds off horizontal motion. Self-tuning
+                // floor blend capped by a self-tuning max tilt angle - see the field-block comment
+                // above and hover_mode_fixes.md for why (a flat-angle cap and a separate escape-valve
+                // branch were both tried and found unsafe).
                 var up = upwards;
+                var actualVerticalSpeed = _vessel.VerticalSrfSpeed;
                 var surfaceVelocity = _telemetry.SurfaceMovementVelocity;
                 var horizontal = Vector.minus(surfaceVelocity, Vector.scale(up, Vector.dot(surfaceVelocity, up)));
                 var horizontalSpeed = horizontal.magnitude;
 
-                var desired = up;
-                double rawTiltTangent = HoverHorizontalGain * horizontalSpeed;
-                double tiltTangentCap = Math.Tan(HoverMaxTilt * Math.PI / 180.0);
-                double tiltTangent = 0.0;
-                if (horizontalSpeed > 0.1)
+                // _hoverThrottleIntegralKnown is false only before the first UpdateHoverThrottle tick
+                // after engage - treat that as "unknown yet" (fall back to a nominal floor scale and
+                // HoverMaxTiltAngleFallback) rather than inferring it from _throttleIntegral == 0,
+                // which is also a normal mid-flight PID state, not just an engage-time default (see
+                // hover_mode_fixes.md round 11).
+                bool throttleDataKnown = _hoverThrottleIntegralKnown;
+                double throttleScale = throttleDataKnown ? _throttleIntegral / HoverTiltReferenceThrottle : 1.0;
+
+                // cos(max tilt angle): the angle at which holding HoverTargetVerticalSpeed would cost
+                // exactly HoverTiltThrottleBudget of total throttle (_throttleIntegral / cos(angle) ==
+                // budget). Clamped to at most 0.999 so the tan-based floor conversion below never
+                // divides by (near-)zero.
+                double cosMaxTilt = throttleDataKnown
+                    ? Math.Min(_throttleIntegral / HoverTiltThrottleBudget, 0.999)
+                    : Math.Cos(HoverMaxTiltAngleFallback * Math.PI / 180.0);
+                double sinMaxTilt = Math.Sqrt(Math.Max(0.0, 1.0 - cosMaxTilt * cosMaxTilt));
+
+                // Logged unconditionally (even when unused below) so [Hover/attitude] always shows
+                // which term is binding - self-tuned floor, actual-speed floor, or the angle cap.
+                double tiltFloor = Math.Max(HoverTiltAuthorityFloor * throttleScale, HoverTiltAuthorityFloorMin);
+                double maxAngleFloor = horizontalSpeed * cosMaxTilt / sinMaxTilt;
+
+                Vector desired;
+                if (horizontalSpeed < 0.05)
                 {
-                    tiltTangent = Math.Min(rawTiltTangent, tiltTangentCap);
-                    desired = Vector.normalize(Vector.minus(up, Vector.scale(Vector.normalize(horizontal), tiltTangent)));
+                    desired = up;
                 }
-                _hoverCosTilt = 1.0 / Math.Sqrt(1.0 + tiltTangent * tiltTangent);
+                else
+                {
+                    double verticalFloor = Math.Max(Math.Abs(actualVerticalSpeed), tiltFloor);
+                    // Hard ceiling: raise verticalFloor's effective minimum to whatever value caps
+                    // atan(horizontalSpeed/verticalFloor) at the self-tuned max tilt angle.
+                    verticalFloor = Math.Max(verticalFloor, maxAngleFloor);
+                    desired = Vector.normalize(Vector.minus(Vector.scale(up, verticalFloor), horizontal));
+                }
+                // cos(tilt angle) - used by UpdateHoverThrottle to keep the vertical thrust component
+                // on target while the vessel leans.
+                _hoverCosTilt = Math.Max(Vector.dot(desired, up), 0.01);
 
                 // Point the vessel's nose along the desired thrust vector directly via LookRotation
                 // (see the comment on AttitudeMode.OrbitPrograde). Heading/pitch aren't user-configurable
@@ -260,19 +322,11 @@ public class SASManager : MonoBehaviour
                 _rotation = look;
                 _rotation.localRotation = look.localRotation * QuaternionD.Euler(0, 0, effZ) * QuaternionD.Euler(90, 0, 0);
 
-                // Horizontal-cancellation is a pure-proportional controller (tilt angle scales
-                // directly with current horizontal speed, no integral/derivative term) - if it's
-                // struggling to null horizontal speed, the likely culprits are (a) tilt saturating at
-                // HoverMaxTilt (not enough authority to correct faster) or (b) the attitude only being
-                // recomputed on the adaptive RefreshInterval, so it's chasing a horizontal-velocity
-                // vector that's already changed direction by the time SAS catches up. This line exposes
-                // both: whether the raw (uncapped) tilt demand exceeds the cap, and (via the trailing
-                // angleToTarget in the log line below) how far actual attitude lags the commanded one.
                 _LOGGER.LogDebug(
                     $"[Hover/attitude] horizontalSpeed={horizontalSpeed:F2}m/s horizontal={FormatVector(horizontal)} " +
-                    $"rawTiltTangent={rawTiltTangent:F3} cappedTiltTangent={tiltTangent:F3}[{(rawTiltTangent > tiltTangentCap ? "SATURATED" : "ok")}] " +
-                    $"tiltDeg={Math.Atan(tiltTangent) * 180.0 / Math.PI:F1} desired={FormatVector(desired)} hoverCosTilt={_hoverCosTilt:F3} " +
-                    $"refreshInterval={RefreshInterval:F3}s");
+                    $"actualVerticalSpeed={actualVerticalSpeed:F2}m/s throttleIntegral={_throttleIntegral:F3} " +
+                    $"tiltFloor={tiltFloor:F2} maxAngleFloor={maxAngleFloor:F2} maxTiltAngleDeg={Math.Acos(Clamp(cosMaxTilt, -1.0, 1.0)) * 180.0 / Math.PI:F1} " +
+                    $"desired={FormatVector(desired)} hoverCosTilt={_hoverCosTilt:F3} refreshInterval={RefreshInterval:F3}s");
 
                 break;
             }
@@ -445,26 +499,35 @@ public class SASManager : MonoBehaviour
 
     /// <summary>
     /// Engages hover: SAS holds the vessel thrust-up (tilting to null horizontal velocity) while the
-    /// throttle controller cancels vertical velocity and holds the engagement altitude.
+    /// throttle controller drives vertical velocity to <see cref="HoverTargetVerticalSpeed"/> (reset
+    /// to 0 here - "hold vertical speed", not altitude; see the field-block comment above).
     /// </summary>
     public void SetHover()
     {
-        // Hold whatever altitude we engaged at, and seed the throttle integrator with the current
-        // throttle so engaging hover doesn't jolt the engines.
-        _hoverTargetAltitude = _vessel.AltitudeFromSurface;
+        // Seed the throttle integrator with the current throttle so engaging hover doesn't jolt the
+        // engines, and the derivative term with the current vertical speed so its first tick doesn't
+        // see a spurious jump from 0.
+        HoverTargetVerticalSpeed = 0;
         _throttleIntegral = _vessel.flightCtrlState.mainThrottle;
+        _hoverThrottleIntegralKnown = false;
         _hoverCosTilt = 1.0;
+        _lastVerticalSpeedForDerivative = _vessel.VerticalSrfSpeed;
+        _filteredThrustDrivenAccel = _vessel.gravityForPos.magnitude; // matches a coasting vessel's true accel (0 thrust-driven) so the D term doesn't see a spurious jump from 0 on the first tick
         HoverThrottle = _vessel.flightCtrlState.mainThrottle;
 
         SetMode(AttitudeMode.Hover);
-        _LOGGER.LogInfo($"Hover engage altitude={_hoverTargetAltitude:F1}m throttle={HoverThrottle:F2}");
+        _LOGGER.LogInfo(
+            $"Hover engage altitude={_vessel.AltitudeFromSurface:F1}m verticalSpeed={_vessel.VerticalSrfSpeed:F2}m/s throttle={HoverThrottle:F2}");
     }
 
     /// <summary>
-    /// Vertical-velocity / altitude-hold throttle controller. A proportional term gives an immediate
-    /// response and an integral term self-tunes to the vessel's hover throttle regardless of TWR, so
-    /// no per-vessel thrust/mass model is needed. Tilt (used to kill horizontal velocity) is divided
-    /// out so the vertical thrust component stays on target while the vessel leans.
+    /// Vertical-speed throttle controller (holds <see cref="HoverTargetVerticalSpeed"/>, not
+    /// altitude - see the field-block comment above). A proportional term gives an immediate
+    /// response, an integral term self-tunes to the vessel's hover throttle regardless of TWR (so
+    /// no per-vessel thrust/mass model is needed), and a derivative term on the vessel's own
+    /// vertical acceleration damps the overshoot the P+I terms alone let through. Tilt (used to
+    /// kill horizontal velocity) is divided out so the vertical thrust component stays on target
+    /// while the vessel leans.
     /// </summary>
     private void UpdateHoverThrottle()
     {
@@ -472,29 +535,52 @@ public class SASManager : MonoBehaviour
         if (dt <= 0.0)
             return;
 
-        double altitudeError = _hoverTargetAltitude - _vessel.AltitudeFromSurface;
-        double targetVerticalSpeed = Clamp(altitudeError * HoverAltitudeGain, -HoverMaxDescentRate, HoverMaxClimbRate);
-        double verticalSpeedError = targetVerticalSpeed - _vessel.VerticalSrfSpeed;
+        double actualVerticalSpeed = _vessel.VerticalSrfSpeed;
+        double verticalSpeedError = HoverTargetVerticalSpeed - actualVerticalSpeed;
+        // Derivative-on-measurement (not on error) so a future change to HoverTargetVerticalSpeed
+        // doesn't itself spike this term - only the vessel's own acceleration does.
+        double verticalAccel = (actualVerticalSpeed - _lastVerticalSpeedForDerivative) / dt;
+        _lastVerticalSpeedForDerivative = actualVerticalSpeed;
+        // Subtract out the baseline free-fall deceleration so the D term only reacts to
+        // thrust/drag-driven acceleration, not to gravity itself - a raw-vAccel D term can't tell
+        // ordinary coasting deceleration apart from a real overshoot, and fires throttle to fight
+        // gravity on high-g bodies (see hover_mode_fixes.md round 4). Use gravityForPos, not
+        // gravityTrue - the latter is a dead field, never assigned anywhere in the decompiled type
+        // (see [[verify-decompiled-fields]] in memory).
+        double thrustDrivenAccel = verticalAccel + _vessel.gravityForPos.magnitude;
+        // Low-pass filter before this feeds the D term - see HoverThrottleAccelFilterTime's field
+        // comment for why.
+        double filterAlpha = 1.0 - Math.Exp(-dt / HoverThrottleAccelFilterTime);
+        _filteredThrustDrivenAccel += (thrustDrivenAccel - _filteredThrustDrivenAccel) * filterAlpha;
 
         _throttleIntegral = Clamp(_throttleIntegral + verticalSpeedError * HoverThrottleKi * dt, 0.0, 1.0);
-        double throttle = _throttleIntegral + verticalSpeedError * HoverThrottleKp;
+        // From here on _throttleIntegral is a real, live PID value - even if it happens to be exactly
+        // 0.0 (a normal state, not "no data yet"; see SetRotation's Hover case for why that
+        // distinction matters).
+        _hoverThrottleIntegralKnown = true;
+        double throttle = (_throttleIntegral + verticalSpeedError * HoverThrottleKp - _filteredThrustDrivenAccel * HoverThrottleKd) / _hoverCosTilt;
+        double clampedThrottle = Clamp(throttle, 0.0, 1.0);
 
-        if (_hoverCosTilt > 0.1)
-            throttle /= _hoverCosTilt;
+        // Rate-limit the actuator itself - see HoverThrottleMaxRate's field comment for why. This is
+        // the last step before the value is published, so it bounds what the engine actually does
+        // regardless of how large a jump the P/I/D formula above just asked for.
+        double maxDelta = HoverThrottleMaxRate * dt;
+        double rateLimitedThrottle = Clamp(clampedThrottle, HoverThrottle - maxDelta, HoverThrottle + maxDelta);
 
-        HoverThrottle = (float)Clamp(throttle, 0.0, 1.0);
+        HoverThrottle = (float)Clamp(rateLimitedThrottle, 0.0, 1.0);
 
         // Runs every frame, so log on its own slower timer (independent of the attitude
         // RefreshInterval) to avoid flooding the log while still catching throttle saturation
-        // (pinned at 0 or 1 - meaning no authority left to also correct horizontal speed via tilt)
-        // or a vertical-speed error that never settles.
+        // (pinned at 0 or 1) or a vertical-speed error that never settles.
         if (_UT - _lastHoverLogTime > 0.25)
         {
             _lastHoverLogTime = _UT;
             _LOGGER.LogDebug(
-                $"[Hover/throttle] altitude={_vessel.AltitudeFromSurface:F1}m target={_hoverTargetAltitude:F1}m altErr={altitudeError:F2}m " +
-                $"targetVSpeed={targetVerticalSpeed:F2}m/s actualVSpeed={_vessel.VerticalSrfSpeed:F2}m/s vSpeedErr={verticalSpeedError:F2}m/s " +
-                $"throttleIntegral={_throttleIntegral:F3} throttlePreClamp={throttle:F3}[{(throttle <= 0.0 || throttle >= 1.0 ? "SATURATED" : "ok")}] " +
+                $"[Hover/throttle] altitude={_vessel.AltitudeFromSurface:F1}m targetVSpeed={HoverTargetVerticalSpeed:F2}m/s " +
+                $"actualVSpeed={actualVerticalSpeed:F2}m/s vSpeedErr={verticalSpeedError:F2}m/s vAccel={verticalAccel:F2}m/s^2 " +
+                $"thrustDrivenAccel={thrustDrivenAccel:F2}m/s^2 filteredThrustDrivenAccel={_filteredThrustDrivenAccel:F2}m/s^2 throttleIntegral={_throttleIntegral:F3} " +
+                $"throttlePreClamp={throttle:F3}[{(throttle <= 0.0 || throttle >= 1.0 ? "SATURATED" : "ok")}] " +
+                $"clampedThrottle={clampedThrottle:F3}[{(clampedThrottle != rateLimitedThrottle ? "RATE-LIMITED" : "ok")}] " +
                 $"HoverThrottle={HoverThrottle:F3} hoverCosTilt={_hoverCosTilt:F3}");
         }
     }
