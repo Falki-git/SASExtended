@@ -57,10 +57,22 @@ namespace SASExtended
         /// (The Unity 6 <c>[UxmlElement]</c>/<c>UxmlSerializedData</c> path can't be used here: it
         /// serializes the controls into the VisualTreeAsset as native <c>[SerializeReference]</c>, which
         /// Unity's native serializer cannot resolve for a late-loaded mod assembly, and there is no
-        /// runtime registry to fix it. So the controls deliberately use the legacy UxmlFactory system.)
+        /// runtime registry to fix it. So the controls ship with the legacy UxmlFactory system; the
+        /// <c>[UxmlElement]</c> face exists only behind the editor-side <c>SASX_UI_AUTHORING</c> define
+        /// for UI Builder authoring — see <c>.claude/ui_authoring_mode.md</c>.)
         /// </summary>
         private static void RegisterUxmlFactories()
         {
+#if SASX_UI_AUTHORING
+            // This assembly was compiled in UI Authoring Mode (SASX_UI_AUTHORING): the custom controls
+            // expose Unity 6 UxmlSerializedData instead of legacy factories, and a UXML bundled in
+            // this state cannot load in-game. Authoring mode is design-time-only — the ThunderKit
+            // pipelines refuse to build while it is on (see EnsureLegacyUxmlImport), so if this log
+            // line ever appears in-game, someone bypassed the pipeline guard.
+            _logger.LogError(
+                "SASExtended was built with SASX_UI_AUTHORING set; custom UI controls will not load " +
+                "in-game. Turn off 'Modding/SAS Extended UI Authoring Mode' in the Unity editor and rebuild.");
+#else
             try
             {
                 var registryType = typeof(VisualElement).Assembly
@@ -86,6 +98,7 @@ namespace SASExtended
             {
                 _logger.LogError($"Failed to register custom UXML factories: {ex}");
             }
+#endif
         }
 
         /// <summary>
