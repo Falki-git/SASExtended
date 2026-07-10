@@ -45,9 +45,19 @@ namespace SASExtended.UI
             MainWindowController = mainWindow.gameObject.AddComponent<MainWindowController>();
         }
 
+        // User-driven (AppBar button, close button): persists the new state as the player's chosen
+        // default so it's restored the next time flight is entered.
         public void ToggleUI(bool state)
         {
             MainWindowController.IsWindowOpen = state;
+        }
+
+        // Scene-driven (SASExtendedPlugin.OnGameStateChangedMessage, and the initial hide-on-boot):
+        // applies visibility without touching the persisted "last state" - see
+        // MainWindowController.SetOpenWithoutPersisting for why that distinction matters.
+        public void SetVisible(bool state)
+        {
+            MainWindowController.SetOpenWithoutPersisting(state);
         }
     }
 }

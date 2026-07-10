@@ -1,10 +1,13 @@
 using System;
 using System.Reflection;
 using JetBrains.Annotations;
+using KSP.Game;
+using KSP.Messages;
 using Redux.ExtraModTypes;
 using SASExtended.Managers;
 using SASExtended.UI;
 using SASExtended.UI.Controls;
+using SASExtended.Utilities;
 using SpaceWarp2.UI.API.Appbar;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -41,6 +44,14 @@ namespace SASExtended
         /// </summary>
         public override void OnPreInitialized()
         {
+            Instance = this;
+
+            // Bind every SWConfiguration entry as early as possible - the game snapshots each mod's
+            // config (GameInstance.InitializeSettingsMenuManager) very early in its own bootstrap to
+            // build the Settings -> Mods page, and a mod with no bound sections/keys yet at that point
+            // is silently skipped for the rest of the session. See Utilities/Settings.cs.
+            Settings.Initialize();
+
             RegisterUxmlFactories();
         }
 
@@ -106,8 +117,6 @@ namespace SASExtended
         /// </summary>
         public override void OnInitialized()
         {
-            Instance = this;
-
             // Load the UI from the mod's addressables.
             var windowUxml = Assets.LoadAssetAsync<VisualTreeAsset>(WindowUxmlAddress).WaitForCompletion();
 
@@ -122,8 +131,12 @@ namespace SASExtended
                 isOpen => SceneController.Instance.ToggleUI(isOpen)
             );
 
-            // Start hidden; the AppBar button opens the window.
-            SceneController.Instance.ToggleUI(false);
+            // Start hidden - this runs once at game boot, well before any flight scene is entered, so
+            // there's nothing to restore yet. Use the non-persisting setter: unlike the AppBar
+            // callback above, this isn't the player choosing to close the window, so it must not
+            // overwrite Settings.WindowIsOpen (see OnGameStateChangedMessage, which is what actually
+            // restores/hides the window using that persisted value once flight is entered/left).
+            SceneController.Instance.SetVisible(false);
 
             // Create the SAS control loop (a MonoBehaviour that recomputes and applies the target
             // orientation every frame). Parent it to this mod so it lives for the session.
@@ -133,6 +146,26 @@ namespace SASExtended
 
             // Apply Harmony patches in this assembly (the hover throttle override on FlightInputHandler).
             CreateHarmonyAndPatchAll();
+
+            // Hide the window when leaving flight/Map3D, and restore it to the player's last
+            // explicitly-chosen open/closed state when (re-)entering. Map3D is just the map view while
+            // still in flight, so switching between the two isn't a "leaving flight" transition.
+            Messages.PersistentSubscribe<GameStateChangedMessage>(OnGameStateChangedMessage);
+        }
+
+        private static bool IsFlightState(GameState state) => state == GameState.FlightView || state == GameState.Map3DView;
+
+        private void OnGameStateChangedMessage(MessageCenterMessage message)
+        {
+            var msg = (GameStateChangedMessage)message;
+
+            bool wasInFlight = IsFlightState(msg.PreviousState);
+            bool isInFlight = IsFlightState(msg.CurrentState);
+
+            if (wasInFlight == isInFlight)
+                return;
+
+            SceneController.Instance.SetVisible(isInFlight && Settings.WindowIsOpen.Value);
         }
 
         /// <summary>

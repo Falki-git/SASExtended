@@ -1,10 +1,22 @@
 {
     "Window": {
         // Saved window horizontal position in pixels. -1 means the window has never been moved yet.
-        // Default: 642.75
-        "PositionX": 642.75,
+        // Default: 639
+        "Window horizontal position (px)": 639.0,
         // Saved window vertical position in pixels. -1 means the window has never been moved yet.
-        // Default: 765
-        "PositionY": 765.0
+        // Default: 762.75
+        "Window vertical position (px)": 762.75,
+        // Whether the SAS Extended window is shown automatically when entering flight.
+        // Default: True
+        "Window open by default": true
+    },
+    "UI": {
+        // How often (in seconds) the status readout line refreshes while the window is open.
+        // Accepts: 0.05 - 2
+        // Default: 0.2
+        "Status readout refresh interval (sec)": 0.2,
+        // Whether the status readout line is computed/updated at all. Disable to skip this work entirely.
+        // Default: True
+        "Enable status readout": true
     }
 }
