@@ -39,6 +39,9 @@
     --waypoint-gray: rgb(128, 128, 128);
     --mission-area-green: rgba(0, 255, 0, 0.4);
     --mission-border-black: rgba(0, 0, 0, 0.1);
+    --prograde-green: rgb(0, 255, 100);
+    --normal-magenta: rgb(190, 65, 190);
+    --radial-blue: rgb(65, 190, 190);
 }
 
 .root {
@@ -108,10 +111,12 @@
     border-right-width: 1px;
     border-top-width: 1px;
     border-bottom-width: 1px;
-    border-left-color: rgba(0, 0, 0, 0);
-    border-right-color: rgba(0, 0, 0, 0);
-    border-top-color: rgba(0, 0, 0, 0);
-    border-bottom-color: rgba(0, 0, 0, 0);
+    border-left-color: rgba(0, 0, 0, 0.02);
+    border-right-color: rgba(0, 0, 0, 0.02);
+    border-top-color: rgba(0, 0, 0, 0.02);
+    border-bottom-color: rgba(0, 0, 0, 0.02);
+    transition-duration: 0s;
+    transition-delay: 0s;
 }
 
 .body Button.unity-button.unity-text-element:hover {
@@ -216,6 +221,18 @@
 
 .close-button__background:hover {
     -unity-background-image-tint-color: var(--redish);
+}
+
+.mode-container {
+    flex-grow: 1;
+    display: flex;
+    border-left-color: rgb(0, 0, 0);
+    border-right-color: rgb(0, 0, 0);
+    border-top-color: rgb(0, 0, 0);
+    border-bottom-color: rgb(0, 0, 0);
+    border-bottom-width: 1px;
+    border-bottom-right-radius: 5px;
+    border-bottom-left-radius: 5px;
 }
 
 .side-toggle {
@@ -699,4 +716,16 @@
     border-bottom-right-radius: 2px;
     padding-top: 0;
     padding-bottom: 0;
+}
+
+.side-toggle__led--checked.prograde-background {
+    background-color: var(--prograde-green);
+}
+
+.side-toggle__led--checked.normal-background {
+    background-color: var(--normal-magenta);
+}
+
+.side-toggle__led--checked.radial-background {
+    background-color: var(--radial-blue);
 }

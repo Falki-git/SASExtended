@@ -174,9 +174,12 @@ every pointing mode (not just SURF as originally speculated below — no partial
 ### Hover mode (SPEC → Hov) — throttle control
 
 Unlike every other mode (which only commands orientation via `LockRotation`), **Hover also drives the
-throttle**. It points the vessel thrust-axis up, blended against horizontal surface velocity to null it,
-and modulates throttle to hold `HoverTargetVerticalSpeed` (a signed m/s setpoint, reset to 0 on every
-engage - **not** an altitude lock; see below for why). The throttle law
+throttle**. It points the vessel thrust-axis up, blended against horizontal surface velocity to null it
+(unless the user has toggled `CancelHorizontalVelocity` off), and modulates throttle to hold
+`HoverTargetVerticalSpeed` (a signed m/s setpoint - **not** an altitude lock; see below for why). Both
+`HoverTargetVerticalSpeed` and `CancelHorizontalVelocity` are user-set via the hover-controls UI and
+**persist across engage/disengage** - `SetHover()` deliberately does not reset them back to a default
+(0 / on) on every engage, so the player's last setting sticks. The throttle law
 (`SASManager.UpdateHoverThrottle`) is a full P+I+D controller on vertical-speed error; the integral
 self-tunes to the vessel's hover throttle so **no per-vessel thrust/mass/TWR model is needed**. Gains
 are public tunables (`Hover*` fields on `SASManager`).
