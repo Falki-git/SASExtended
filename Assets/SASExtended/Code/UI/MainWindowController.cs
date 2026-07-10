@@ -24,6 +24,14 @@ public class MainWindowController : MonoBehaviour
     private const string PositionXConfigKey = "PositionX";
     private const string PositionYConfigKey = "PositionY";
 
+    // Config section/keys for the status readout: how often it refreshes (seconds) and whether it
+    // runs at all. 0.2s (5Hz) is plenty responsive for a numeric readout without re-setting
+    // Label.text every single frame.
+    private const string UiConfigSection = "UI";
+    private const string StatusRefreshIntervalConfigKey = "StatusRefreshInterval";
+    private const float DefaultStatusRefreshInterval = 0.2f;
+    private const string StatusLoggingEnabledConfigKey = "StatusLoggingEnabled";
+
     // The UIDocument component of the window game object
     private UIDocument _window;
 
@@ -31,6 +39,13 @@ public class MainWindowController : MonoBehaviour
 
     private IConfigEntry _positionXEntry;
     private IConfigEntry _positionYEntry;
+
+    private IConfigEntry _statusRefreshIntervalEntry;
+    private float _statusRefreshInterval;
+    private IConfigEntry _statusLoggingEnabledEntry;
+    private bool _statusLoggingEnabled;
+    private float _lastStatusUpdateTime = float.NegativeInfinity;
+    private Label _statusLabel;
 
     // The backing field for the IsWindowOpen property
     private bool _isWindowOpen;
@@ -170,6 +185,15 @@ public class MainWindowController : MonoBehaviour
             _root.SetDefaultPosition(_ => new Vector2(savedX, savedY));
         else
             _root.CenterByDefault();
+
+        _statusRefreshIntervalEntry = config.Bind(UiConfigSection, StatusRefreshIntervalConfigKey, DefaultStatusRefreshInterval,
+            "How often (in seconds) the status readout line refreshes while the window is open.");
+        _statusRefreshInterval = (float)_statusRefreshIntervalEntry.Value;
+        _statusLoggingEnabledEntry = config.Bind(UiConfigSection, StatusLoggingEnabledConfigKey, true,
+            "Whether the status readout line is computed/updated at all. Disable to skip this work entirely.");
+        _statusLoggingEnabled = (bool)_statusLoggingEnabledEntry.Value;
+        _statusLabel = _root.Q<Label>("status");
+        _statusLabel.text = string.Empty;
 
         // Persist the position once a drag finishes (dragging is the only way it ever changes).
         _root.RegisterCallback<PointerUpEvent>(evt => SaveWindowPosition());
@@ -417,6 +441,73 @@ public class MainWindowController : MonoBehaviour
         _positionXEntry.Value = _root.resolvedStyle.left;
         _positionYEntry.Value = _root.resolvedStyle.top;
         SASExtendedPlugin.Instance.SWConfiguration.Save();
+    }
+
+    // Gated on IsWindowOpen and the StatusLoggingEnabled config toggle, so the status readout does no
+    // work at all while the window is closed or the feature is disabled.
+    private void Update()
+    {
+        if (!IsWindowOpen || !_statusLoggingEnabled)
+            return;
+
+        if (Time.time - _lastStatusUpdateTime < _statusRefreshInterval)
+            return;
+        _lastStatusUpdateTime = Time.time;
+
+        UpdateStatusLabel();
+    }
+
+    // Status content depends on the active mode (enhancement_roadmap.md item 3): KillRot and Hover
+    // don't point anywhere, so an angle-to-target isn't meaningful for either and they get their own
+    // bespoke readouts; every other mode (including Node/TGT PAR, even while their fallback holds
+    // current attitude - see SASManager.SetRotation) shares the generic angle-to-target + free-axis
+    // readout, since they all go through the same BuildPointingRotation/BuildTargetOrientationRotation
+    // pipeline.
+    private void UpdateStatusLabel()
+    {
+        var sas = SASManager.Instance;
+        if (sas == null || sas.AttitudeMode == AttitudeMode.None)
+        {
+            _statusLabel.text = string.Empty;
+            return;
+        }
+
+        switch (sas.AttitudeMode)
+        {
+            case AttitudeMode.KillRot:
+                _statusLabel.text = $"ω: {sas.GetAngularVelocityDegPerSec():F1}°/s";
+                break;
+
+            case AttitudeMode.Hover:
+                _statusLabel.text = sas.CancelHorizontalVelocity
+                    ? $"V-SPD: {FormatSpeed(sas.GetHoverVerticalSpeed())}  H-SPD: {FormatSpeed(sas.GetHoverHorizontalSpeed())}"
+                    : $"V-SPD: {FormatSpeed(sas.GetHoverVerticalSpeed())}  THR: {sas.HoverThrottle * 100:F0}%";
+                break;
+
+            default:
+                var freeAxes = "";
+                if (!sas.XEnabled) freeAxes += "H";
+                if (!sas.YEnabled) freeAxes += "P";
+                if (!sas.ZEnabled) freeAxes += "R";
+                _statusLabel.text = freeAxes.Length > 0
+                    ? $"Angle to target: {sas.GetAngleToRotation():F1}°  Free: {freeAxes}"
+                    : $"Angle to target: {sas.GetAngleToRotation():F1}°";
+                break;
+        }
+    }
+
+    // Speed readouts switch precision/unit by magnitude so the number stays readable at both hover
+    // (single digits) and orbital (multi-km/s) scales: <100 m/s keeps one decimal, [100,1000) m/s drops
+    // to whole numbers, >=1000 m/s switches to km/s. Sign is preserved as-is (only the magnitude drives
+    // which bucket is picked), so negative speeds format the same way as positive ones.
+    private static string FormatSpeed(double speedMs)
+    {
+        var abs = Math.Abs(speedMs);
+        if (abs >= 1000.0)
+            return $"{speedMs / 1000.0:F1} km/s";
+        if (abs >= 100.0)
+            return $"{speedMs:F0} m/s";
+        return $"{speedMs:F1} m/s";
     }
 
     #region Mode buttons

@@ -24,15 +24,7 @@ while the button stays lit as if tracking — the player can't tell "pointing at
 "there was no node." Grey out / badge the buttons using `HasManeuver` / `HasTargetObject`, or
 show a status line. Cheap, big usability win.
 
-### 3. Status readout in the window
-
-Redux's reworked `VesselSAS` exposes public live telemetry (`angDelta`, `torque`, `sasResp`,
-etc. — see the Redux-vs-vanilla diff in `mod_specifics.md`), and the mod already computes
-angle-to-target and measured H/P/R every tick. A small readout row (angle-to-target, actual
-vs. commanded H/P/R, hover vertical speed) would surface what currently only exists in
-`Player.log` — and would have shortened several of the hover debugging rounds.
-
-### 4. MechJeb-parity "ADV" tab
+### 3. MechJeb-parity "ADV" tab
 
 Smart A.S.S. is the stated north star; its OBT/SURF/TGT rows are done, leaving ADV —
 arbitrary reference-frame + direction combinations (see `MechJebModuleSmartASS.cs` in the
@@ -42,7 +34,7 @@ SURF/TGT/SPEC.
 
 ## Refactors — optimize and stabilize
 
-### 5. Vessel-lifecycle hardening in `SASManager`
+### 4. Vessel-lifecycle hardening in `SASManager`
 
 `Update` guards `_vessel == null`, but `SetMode` dereferences `_vessel.Autopilot` unguarded
 (NRE if clicked with no active vessel); `_killRotTarget` and Hover's `_throttleIntegral` are
@@ -51,7 +43,7 @@ switch/undock/revert; nothing resets `AttitudeMode` on scene exit. Subscribe to
 vessel-change/game-state messages and disengage cleanly. **Probably the biggest latent-bug
 reservoir in the codebase.**
 
-### 6. Compute telemetry vectors on demand, not all-up-front
+### 5. Compute telemetry vectors on demand, not all-up-front
 
 `SetRotation` reframes ~15 direction vectors plus walks the body tree for the parent star
 (`GetParentStar`) every tick, at up to 50 Hz, even when the mode needs exactly one of them.
@@ -59,14 +51,13 @@ Move the vector selection into the mode branches — or a mode → vector-select
 would also collapse the 20-case switch and the 20 one-line `SetXxx` wrappers. Cuts per-tick
 work by ~90% and shrinks the file substantially.
 
-### 7. Gate debug-log string building
+### 6. Gate debug-log string building
 
 Both `[SetRotation]` and `[Hover/attitude]` build large interpolated strings every tick
 regardless of whether debug logging is enabled — allocation and formatting cost in the hot
-loop. Wrap them in a level check or a config-backed "diagnostics" flag (pairs naturally with
-item 6).
+loop. Wrap them in a level check or a config-backed "diagnostics" flag
 
-### 8. Extract the pure math into a testable layer + delete dead code
+### 7. Extract the pure math into a testable layer + delete dead code
 
 The offset math was validated via a standalone quaternion simulation and the hover law took
 11 in-game rounds — both because nothing is testable outside the Unity editor. Pull
