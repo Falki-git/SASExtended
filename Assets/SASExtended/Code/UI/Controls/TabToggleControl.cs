@@ -2,10 +2,15 @@ using UnityEngine.UIElements;
 
 namespace SASExtended.UI.Controls
 {
-    // Uses the legacy UxmlFactory/UxmlTraits system on purpose (not Unity 6 [UxmlElement]) — see the
-    // note on SideToggleControl for why. Factories are registered at runtime by
+    // DUAL-MODE UXML SUPPORT — legacy UxmlFactory/UxmlTraits by default (the only form that loads
+    // from a bundled VisualTreeAsset in-game), or Unity 6 [UxmlElement]/[UxmlAttribute] while the
+    // SASX_UI_AUTHORING define is set so UI Builder gets its attribute inspector. See the full
+    // explanation on SideToggleControl. Factories are registered at runtime by
     // SASExtendedPlugin.RegisterUxmlFactories.
-    public class TabToggleControl : Button
+#if SASX_UI_AUTHORING
+    [UxmlElement]
+#endif
+    public partial class TabToggleControl : Button
     {
         public const string UssClassName = "tab-toggle";
 
@@ -172,6 +177,19 @@ namespace SASExtended.UI.Controls
             }
         }
 
+#if SASX_UI_AUTHORING
+        // Authoring-only UXML attribute surface for UI Builder — names must match the legacy
+        // UxmlTraits attribute names, and IsEnabled must be declared before IsToggled because
+        // SetEnabled resets the toggle state (see SideToggleControl).
+        [UxmlAttribute("Text")]
+        public string UxmlText { get => TextValue; set => TextValue = value; }
+
+        [UxmlAttribute("IsEnabled")]
+        public bool UxmlIsEnabled { get => IsEnabled; set => SetEnabled(value); }
+
+        [UxmlAttribute("IsToggled")]
+        public bool UxmlIsToggled { get => IsToggled; set => SwitchToggleState(value, false); }
+#else
         public new class UxmlFactory : UxmlFactory<TabToggleControl, UxmlTraits> { }
         public new class UxmlTraits : VisualElement.UxmlTraits
         {
@@ -203,5 +221,6 @@ namespace SASExtended.UI.Controls
                 }
             }
         }
+#endif
     }
 }

@@ -286,6 +286,10 @@
     border-bottom-right-radius: 0;
 }
 
+.side-toggle--long {
+    width: 100%;
+}
+
 .side-toggle__connector {
     width: 10px;
     height: 1px;

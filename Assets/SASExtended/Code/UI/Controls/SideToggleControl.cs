@@ -3,14 +3,23 @@ using UnityEngine.UIElements;
 
 namespace SASExtended.UI.Controls
 {
-    // NOTE: this control uses the legacy UxmlFactory/UxmlTraits system on purpose, NOT the Unity 6
-    // [UxmlElement]/UxmlSerializedData system. A mod assembly is loaded late by SpaceWarp, and the
-    // new system serializes controls into the bundled VisualTreeAsset as native [SerializeReference],
-    // which Unity's native serializer cannot resolve for a late-loaded assembly (there is no runtime
-    // registry to fix it). The UxmlFactory system instead resolves controls by type-name string at
-    // clone time via VisualElementFactoryRegistry, which the plugin populates at init (see
-    // SASExtendedPlugin.RegisterUxmlFactories). Do not "upgrade" this to [UxmlElement].
-    public class SideToggleControl : Button
+    // DUAL-MODE UXML SUPPORT — which face this control exposes is decided by the SASX_UI_AUTHORING
+    // scripting define (toggled via the "Modding/SAS Extended UI Authoring Mode" menu item):
+    //
+    // - Default (shipping) face: legacy UxmlFactory/UxmlTraits, registered at runtime by
+    //   SASExtendedPlugin.RegisterUxmlFactories. This is the ONLY form that can load from a bundled
+    //   VisualTreeAsset in-game: the Unity 6 [UxmlElement] system serializes controls into the asset
+    //   as native [SerializeReference] UxmlSerializedData, which cannot be resolved for a late-loaded
+    //   mod assembly (no runtime registry exists — see .claude/custom_uxml_controls.md).
+    // - Authoring face (SASX_UI_AUTHORING defined): Unity 6 [UxmlElement]/[UxmlAttribute], giving
+    //   UI Builder its full attribute inspector while designing UI. The UXML text is identical either
+    //   way; only the IMPORTED VisualTreeAsset differs, so the editor tooling (UiAuthoringMode)
+    //   reimports the UXML whenever the mode changes, and the pipeline guard (EnsureLegacyUxmlImport)
+    //   blocks mod builds while authoring mode is on. Never ship a build made in authoring mode.
+#if SASX_UI_AUTHORING
+    [UxmlElement]
+#endif
+    public partial class SideToggleControl : Button
     {
         public const string UssClassName = "side-toggle";
         public const string UssClassName_Connector = UssClassName + "__connector";
@@ -35,6 +44,8 @@ namespace SASExtended.UI.Controls
         public const string UssClassName_Small_Container = UssClassName_Small + "__container";
         public const string UssClassName_Small_Led = UssClassName_Small + "__led";
         public const string UssClassName_Small_Text = UssClassName_Small + "__text";
+        
+        public const string UssClassName_Long = UssClassName + "--long";
 
         public bool IsToggled { get; private set; }
         public bool IsEnabled { get; private set; }
@@ -59,6 +70,17 @@ namespace SASExtended.UI.Controls
             {
                 SetSmallToggle(value);
                 _isSmall = value;
+            }
+        }
+        
+        private bool _isLong;
+        public bool IsLong
+        {
+            get => _isLong;
+            set
+            {
+                SetLongToggle(value);
+                _isLong = value;
             }
         }
 
@@ -126,6 +148,18 @@ namespace SASExtended.UI.Controls
                 _container.AddToClassList(UssClassName_Container);
                 _led.AddToClassList(UssClassName_Led);
                 _text.AddToClassList(UssClassName_Text);
+            }
+        }
+        
+        private void SetLongToggle(bool value)
+        {
+            if (value)
+            {
+                AddToClassList(UssClassName_Long);
+            }
+            else
+            {
+                RemoveFromClassList(UssClassName_Long);
             }
         }
 
@@ -268,6 +302,30 @@ namespace SASExtended.UI.Controls
             }
         }
 
+#if SASX_UI_AUTHORING
+        // Authoring-only UXML attribute surface for UI Builder (see the class comment). The attribute
+        // names must match the legacy UxmlTraits attribute names exactly so the same UXML text works
+        // in both modes. Declaration order matters: the UxmlSerializedData deserializer applies
+        // attributes in declaration order and SetEnabled resets the toggle state — so IsEnabled must
+        // be declared before IsToggled.
+        [UxmlAttribute("Text")]
+        public string UxmlText { get => TextValue; set => TextValue = value; }
+
+        [UxmlAttribute("IsBig")]
+        public bool UxmlIsBig { get => IsBig; set => IsBig = value; }
+
+        [UxmlAttribute("IsSmall")]
+        public bool UxmlIsSmall { get => IsSmall; set => IsSmall = value; }
+        
+        [UxmlAttribute("IsLong")]
+        public bool UxmlIsLong { get => IsLong; set => IsLong = value; }
+
+        [UxmlAttribute("IsEnabled")]
+        public bool UxmlIsEnabled { get => IsEnabled; set => SetEnabled(value); }
+
+        [UxmlAttribute("IsToggled")]
+        public bool UxmlIsToggled { get => IsToggled; set => SwitchToggleState(value, false); }
+#else
         public new class UxmlFactory : UxmlFactory<SideToggleControl, UxmlTraits> { }
         public new class UxmlTraits : VisualElement.UxmlTraits
         {
@@ -284,6 +342,9 @@ namespace SASExtended.UI.Controls
 
             UxmlBoolAttributeDescription _isSmall = new UxmlBoolAttributeDescription
             { name = "IsSmall", defaultValue = false };
+
+            UxmlBoolAttributeDescription _isLong = new UxmlBoolAttributeDescription
+            { name = "IsLong", defaultValue = false };
 
             UxmlBoolAttributeDescription _isEnabled = new UxmlBoolAttributeDescription
             { name = "IsEnabled", defaultValue = false };
@@ -304,10 +365,12 @@ namespace SASExtended.UI.Controls
                     control.TextValue = _name.GetValueFromBag(bag, cc);
                     control.IsBig = _isBig.GetValueFromBag(bag, cc);
                     control.IsSmall = _isSmall.GetValueFromBag(bag, cc);
+                    control.IsLong = _isLong.GetValueFromBag(bag, cc);
                     control.SetEnabled(_isEnabled.GetValueFromBag(bag, cc));
                     control.SwitchToggleState(_isToggled.GetValueFromBag(bag, cc), false);
                 }
             }
         }
+#endif
     }
 }
