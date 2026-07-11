@@ -172,6 +172,30 @@ public class SASManager : MonoBehaviour
             return;
         }
 
+        // Two-way sync with stock SAS (enhancement_roadmap.md item 1): we only ever drive the
+        // vessel through Autopilot.SetActive(true) (-> Activate(StabilityAssist)) followed by
+        // SAS.LockRotation, so Enabled and AutopilotMode should always read back exactly
+        // (true, StabilityAssist) while one of our modes is engaged. If either has drifted, something
+        // external changed stock SAS out from under us - the player pressed T / clicked the SAS
+        // toggle off (Enabled -> false) or clicked a stock direction button / hotkey (AutopilotMode ->
+        // Prograde/Retrograde/Target/Maneuver/etc.). Disengaging here (rather than just letting our
+        // next LockRotation silently fight the stock input) both stops the fight and - via the shared
+        // Disengaged event - flips the UI back to OFF so it doesn't keep showing a mode we no longer
+        // actually control.
+        //
+        // Polled here instead of subscribing to SASEnabledMessage/SASDisabledMessage/
+        // SASModeChangedMessage as the roadmap item originally suggested: decompiling
+        // VesselComponent.SetAutopilotEnableDisable confirmed those three only fire together, on the
+        // Enabled/Disabled transition (T key) - stock direction-button clicks route through
+        // TelemetryDataProvider.SetAutopilotMode -> VesselComponent.SetState -> SetAutopilotMode
+        // without publishing anything. A pure message subscription would miss that second case
+        // entirely; polling the two fields we already read every tick catches both uniformly.
+        if (!vessel.Autopilot.Enabled || vessel.Autopilot.AutopilotMode != AutopilotMode.StabilityAssist)
+        {
+            DisengageForExternalChange();
+            return;
+        }
+
         if (_UT - _lastRefreshTime > RefreshInterval /*DebugUI.Instance.RefreshInterval*/)
         {
             SetRotation();
@@ -653,11 +677,26 @@ public class SASManager : MonoBehaviour
         Disengage();
     }
 
-    private void Disengage()
+    // Fired from Update() when stock SAS (Autopilot.Enabled / Autopilot.AutopilotMode) no longer
+    // matches what we last commanded - see the poll above for why. Deliberately does NOT deactivate
+    // the Autopilot like the other Disengage* helpers do: Enabled/AutopilotMode already reflect
+    // whatever the player/stock UI just set (still Enabled, now pointed at Prograde; or already
+    // deactivated by the game's own T-key handler) - calling SetActive(false) here would immediately
+    // fight the very input that triggered this disengage (e.g. force stock SAS off right after the
+    // player turned on Prograde). We only need to stop OUR tracking and reset our own UI/state.
+    // See enhancement_roadmap.md item 1.
+    private void DisengageForExternalChange()
+    {
+        _LOGGER.LogInfo($"Stock SAS was changed externally while {AttitudeMode} was engaged; disengaging SAS Extended.");
+        Disengage(deactivateAutopilot: false);
+    }
+
+    private void Disengage(bool deactivateAutopilot = true)
     {
         AttitudeMode = AttitudeMode.None;
         // See the matching comment in SetSASOff - chain "?." through .Autopilot too, it can be null.
-        _engagedVessel?.Autopilot?.SetActive(false);
+        if (deactivateAutopilot)
+            _engagedVessel?.Autopilot?.SetActive(false);
         _engagedVessel = null;
         ResetPerVesselState();
         Disengaged?.Invoke();
