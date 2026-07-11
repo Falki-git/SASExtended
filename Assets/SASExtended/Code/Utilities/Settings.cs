@@ -51,6 +51,14 @@ namespace SASExtended.Utilities
         // Remembered Hover vertical velocity - session-only, see the comment on AttitudeOffsets above.
         public static SessionValue<float> HoverVerticalVelocity;
 
+        // Default Heading/Pitch/Roll used to seed SurfaceSurf's offset each session (see the
+        // SurfaceSurf special case in Initialize()). Unlike the offsets themselves, these defaults
+        // are user-configurable and persisted, so a user can change SURF's "zero offset" attitude
+        // without having to re-enter it every session.
+        public static ConfigValue<float> SurfaceSurfDefaultHeading;
+        public static ConfigValue<float> SurfaceSurfDefaultPitch;
+        public static ConfigValue<float> SurfaceSurfDefaultRoll;
+
         // "Diagnostics" section
         public static ConfigValue<bool> VerboseLoggingEnabled;
 
@@ -94,14 +102,36 @@ namespace SASExtended.Utilities
                 "Whether the status readout line is computed/updated at all. Disable to skip this work entirely."
                 ));
 
+            // SurfaceSurf needs a 90/90/-90 "level, nose-forward" default instead of the usual 0/0/0 -
+            // BuildPointingRotation's LookRotation(north, upwards) doesn't land on a level attitude at
+            // a zero offset the way every other mode's target vector does. Configurable/persisted so a
+            // user can change SURF's "zero offset" attitude without re-entering it every session.
+            SurfaceSurfDefaultHeading = new(Plugin.SWConfiguration.Bind(
+                "Attitude offsets",
+                "SURF default Heading",
+                90f,
+                "Heading offset SURF resets to at the start of each session."
+                ));
+
+            SurfaceSurfDefaultPitch = new(Plugin.SWConfiguration.Bind(
+                "Attitude offsets",
+                "SURF default Pitch",
+                90f,
+                "Pitch offset SURF resets to at the start of each session."
+                ));
+
+            SurfaceSurfDefaultRoll = new(Plugin.SWConfiguration.Bind(
+                "Attitude offsets",
+                "SURF default Roll",
+                -90f,
+                "Roll offset SURF resets to at the start of each session."
+                ));
+
             // ATTITUDE OFFSETS (session-only - see the field comment above)
             foreach (var mode in OffsetModes)
             {
-                // SurfaceSurf needs a 90/90/-90 "level, nose-forward" default instead of the usual
-                // 0/0/0 - BuildPointingRotation's LookRotation(north, upwards) doesn't land on a level
-                // attitude at a zero offset the way every other mode's target vector does.
                 var (defaultHeading, defaultPitch, defaultRoll) = mode == AttitudeMode.SurfaceSurf
-                    ? (90f, 90f, -90f)
+                    ? (SurfaceSurfDefaultHeading.Value, SurfaceSurfDefaultPitch.Value, SurfaceSurfDefaultRoll.Value)
                     : (0f, 0f, 0f);
 
                 AttitudeOffsets[mode] = (
