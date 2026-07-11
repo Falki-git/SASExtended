@@ -149,11 +149,6 @@ public class MainWindowController : MonoBehaviour
         GameObject.Find(SASExtendedPlugin.ToolbarFlightButtonID)
             ?.GetComponent<UIValue_WriteBool_Toggle>()
             ?.SetValue(value);
-
-        // Update the OAB AppBar button state
-        GameObject.Find(SASExtendedPlugin.ToolbarOabButtonID)
-            ?.GetComponent<UIValue_WriteBool_Toggle>()
-            ?.SetValue(value);
     }
 
     /// <summary>

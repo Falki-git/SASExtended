@@ -3,6 +3,7 @@ using KSP.Game;
 using KSP.Sim;
 using KSP.Sim.impl;
 using SASExtended.Models;
+using SASExtended.PureMath;
 using SASExtended.Utilities;
 using UnityEngine;
 
@@ -21,7 +22,6 @@ public class SASManager : MonoBehaviour
     // silently stopped being engaged underneath the UI.
     public event Action Disengaged;
 
-    //public double X = 90, Y = 90, Z = 90;
     public double X = 0, Y = 0, Z = 0;
     public bool XEnabled = true, YEnabled = true, ZEnabled = true;
     public AttitudeMode AttitudeMode = AttitudeMode.None;
@@ -213,10 +213,6 @@ public class SASManager : MonoBehaviour
 
     public void SetRotation()
     {
-        //double x, y, z;
-        //if (!double.TryParse(_x, out x) || !double.TryParse(_y, out y) || !double.TryParse(_z, out z))
-        //    return;
-
         // RefreshAutopilotTelemetry() is the game's own "autopilot consumers call this before
         // reading telemetry" entry point (as opposed to the display-only per-frame OnUpdate cycle).
         // Without it we could read a frame-stale horizon/orbit-movement/target/maneuver snapshot.
@@ -519,11 +515,6 @@ public class SASManager : MonoBehaviour
                 }
                 break;
 
-            // TEMP - debugging
-            case AttitudeMode.Horizon:
-                _rotation = BuildPointingRotation(north, upwards, out effX, out effY, out effZ); // maybe we can simplify this
-                break;
-
             default: // horizon
                 _rotation = BuildPointingRotation(north, upwards, out effX, out effY, out effZ);
                 break;
@@ -562,7 +553,7 @@ public class SASManager : MonoBehaviour
         }
 
         var rotation = look;
-        rotation.localRotation = look.localRotation * QuaternionD.Euler(-appliedY, appliedX, appliedZ) * QuaternionD.Euler(90, 0, 0);
+        rotation.localRotation = AttitudeMath.ComposePointingRotation(look.localRotation, appliedX, appliedY, appliedZ);
         return rotation;
     }
 
@@ -607,9 +598,7 @@ public class SASManager : MonoBehaviour
     private (double heading, double pitch, double roll) GetCurrentOffsetAngles(Rotation look)
     {
         var currentRotation = Rotation.Reframed(_vessel.ControlTransform.Rotation, look.coordinateSystem);
-        var offset = QuaternionD.Inverse(look.localRotation) * currentRotation.localRotation * QuaternionD.Inverse(QuaternionD.Euler(90, 0, 0));
-        var euler = ((Quaternion)offset).eulerAngles;
-        return (NormalizeAngle(euler.y), NormalizeAngle(-euler.x), NormalizeAngle(euler.z));
+        return AttitudeMath.GetCurrentOffsetAngles(look.localRotation, currentRotation.localRotation);
     }
 
     // Every mode-engage entry point (SetMode itself, and SetSASKillrot/SetHover which touch _vessel
@@ -797,38 +786,26 @@ public class SASManager : MonoBehaviour
             return;
 
         double actualVerticalSpeed = _vessel.VerticalSrfSpeed;
-        double verticalSpeedError = HoverTargetVerticalSpeed - actualVerticalSpeed;
-        // Derivative-on-measurement (not on error) so a future change to HoverTargetVerticalSpeed
-        // doesn't itself spike this term - only the vessel's own acceleration does.
-        double verticalAccel = (actualVerticalSpeed - _lastVerticalSpeedForDerivative) / dt;
-        _lastVerticalSpeedForDerivative = actualVerticalSpeed;
-        // Subtract out the baseline free-fall deceleration so the D term only reacts to
-        // thrust/drag-driven acceleration, not to gravity itself - a raw-vAccel D term can't tell
-        // ordinary coasting deceleration apart from a real overshoot, and fires throttle to fight
-        // gravity on high-g bodies (see hover_mode_fixes.md round 4). Use gravityForPos, not
-        // gravityTrue - the latter is a dead field, never assigned anywhere in the decompiled type
-        // (see [[verify-decompiled-fields]] in memory).
-        double thrustDrivenAccel = verticalAccel + _vessel.gravityForPos.magnitude;
-        // Low-pass filter before this feeds the D term - see HoverThrottleAccelFilterTime's field
-        // comment for why.
-        double filterAlpha = 1.0 - Math.Exp(-dt / HoverThrottleAccelFilterTime);
-        _filteredThrustDrivenAccel += (thrustDrivenAccel - _filteredThrustDrivenAccel) * filterAlpha;
 
-        _throttleIntegral = Clamp(_throttleIntegral + verticalSpeedError * HoverThrottleKi * dt, 0.0, 1.0);
-        // From here on _throttleIntegral is a real, live PID value - even if it happens to be exactly
-        // 0.0 (a normal state, not "no data yet"; see SetRotation's Hover case for why that
-        // distinction matters).
-        _hoverThrottleIntegralKnown = true;
-        double throttle = (_throttleIntegral + verticalSpeedError * HoverThrottleKp - _filteredThrustDrivenAccel * HoverThrottleKd) / _hoverCosTilt;
-        double clampedThrottle = Clamp(throttle, 0.0, 1.0);
+        // Use gravityForPos, not gravityTrue - the latter is a dead field, never assigned anywhere in
+        // the decompiled type (see [[verify-decompiled-fields]] in memory).
+        var result = HoverThrottleMath.Step(
+            new HoverThrottleState
+            {
+                ThrottleIntegral = _throttleIntegral,
+                ThrottleIntegralKnown = _hoverThrottleIntegralKnown,
+                LastVerticalSpeedForDerivative = _lastVerticalSpeedForDerivative,
+                FilteredThrustDrivenAccel = _filteredThrustDrivenAccel,
+                Throttle = HoverThrottle,
+            },
+            dt, actualVerticalSpeed, HoverTargetVerticalSpeed, _vessel.gravityForPos.magnitude, _hoverCosTilt,
+            HoverThrottleKp, HoverThrottleKi, HoverThrottleKd, HoverThrottleAccelFilterTime, HoverThrottleMaxRate);
 
-        // Rate-limit the actuator itself - see HoverThrottleMaxRate's field comment for why. This is
-        // the last step before the value is published, so it bounds what the engine actually does
-        // regardless of how large a jump the P/I/D formula above just asked for.
-        double maxDelta = HoverThrottleMaxRate * dt;
-        double rateLimitedThrottle = Clamp(clampedThrottle, HoverThrottle - maxDelta, HoverThrottle + maxDelta);
-
-        HoverThrottle = (float)Clamp(rateLimitedThrottle, 0.0, 1.0);
+        _throttleIntegral = result.State.ThrottleIntegral;
+        _hoverThrottleIntegralKnown = result.State.ThrottleIntegralKnown;
+        _lastVerticalSpeedForDerivative = result.State.LastVerticalSpeedForDerivative;
+        _filteredThrustDrivenAccel = result.State.FilteredThrustDrivenAccel;
+        HoverThrottle = result.State.Throttle;
 
         // Runs every frame, so log on its own slower timer (independent of the attitude
         // RefreshInterval) to avoid flooding the log while still catching throttle saturation
@@ -840,10 +817,10 @@ public class SASManager : MonoBehaviour
             _lastHoverLogTime = _UT;
             _LOGGER.LogDebug(
                 $"[Hover/throttle] altitude={_vessel.AltitudeFromSurface:F1}m targetVSpeed={HoverTargetVerticalSpeed:F2}m/s " +
-                $"actualVSpeed={actualVerticalSpeed:F2}m/s vSpeedErr={verticalSpeedError:F2}m/s vAccel={verticalAccel:F2}m/s^2 " +
-                $"thrustDrivenAccel={thrustDrivenAccel:F2}m/s^2 filteredThrustDrivenAccel={_filteredThrustDrivenAccel:F2}m/s^2 throttleIntegral={_throttleIntegral:F3} " +
-                $"throttlePreClamp={throttle:F3}[{(throttle <= 0.0 || throttle >= 1.0 ? "SATURATED" : "ok")}] " +
-                $"clampedThrottle={clampedThrottle:F3}[{(clampedThrottle != rateLimitedThrottle ? "RATE-LIMITED" : "ok")}] " +
+                $"actualVSpeed={actualVerticalSpeed:F2}m/s vSpeedErr={result.VerticalSpeedError:F2}m/s vAccel={result.VerticalAccel:F2}m/s^2 " +
+                $"thrustDrivenAccel={result.ThrustDrivenAccel:F2}m/s^2 filteredThrustDrivenAccel={_filteredThrustDrivenAccel:F2}m/s^2 throttleIntegral={_throttleIntegral:F3} " +
+                $"throttlePreClamp={result.ThrottlePreClamp:F3}[{(result.ThrottlePreClamp <= 0.0 || result.ThrottlePreClamp >= 1.0 ? "SATURATED" : "ok")}] " +
+                $"clampedThrottle={result.ClampedThrottle:F3}[{(result.ClampedThrottle != result.RateLimitedThrottle ? "RATE-LIMITED" : "ok")}] " +
                 $"HoverThrottle={HoverThrottle:F3} hoverCosTilt={_hoverCosTilt:F3}");
         }
     }
@@ -927,49 +904,5 @@ public class SASManager : MonoBehaviour
             RefreshInterval = RefreshInterval_long;
     }
 
-    private Vector3 _dif;
-
-    public static Vector3 GetEulerAngleDifference(Vector fromDirection, Vector toDirection)
-    {
-        // Normalize to unit vectors (directions)
-        fromDirection.vector = fromDirection.vector.normalized;
-        toDirection.vector = toDirection.vector.normalized;
-
-        // Convert to Unity float vectors for rotation math
-        Vector3 fromUnity = new Vector3((float)fromDirection.vector.x, (float)fromDirection.vector.y, (float)fromDirection.vector.z);
-        Vector3 toUnity = new Vector3((float)toDirection.vector.x, (float)toDirection.vector.y, (float)toDirection.vector.z);
-
-        // Create rotations (LookRotation equivalent: forward along vector, up is world Y)
-        Quaternion fromRot = Quaternion.LookRotation(fromUnity, Vector3.up);
-        Quaternion toRot = Quaternion.LookRotation(toUnity, Vector3.up);
-
-        // Relative rotation: to * inverse(from) = shortest rotation from 'from' to 'to'
-        Quaternion diffRot = toRot * Quaternion.Inverse(fromRot);
-
-        // Extract Euler angles (degrees)
-        Vector3 euler = diffRot.eulerAngles;
-
-        // Normalize to -180 to +180 for intuitive differences
-        return new Vector3(
-            NormalizeAngle(euler.x),
-            NormalizeAngle(euler.y),
-            NormalizeAngle(euler.z)
-        );
-    }
-
-    // Helper: Wrap 0-360 to -180 to +180
-    private static float NormalizeAngle(float angle)
-    {
-        if (angle > 180f)
-            angle -= 360f;
-
-        if (angle < -180f)
-            angle += 360f;
-
-        return angle;
-    }
-
-    // TEMP - for debugging
-    public void SetHorizon() => SetMode(AttitudeMode.Horizon);
 }
 }
