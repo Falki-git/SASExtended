@@ -73,6 +73,7 @@ public class MainWindowController : MonoBehaviour
     private SideToggleControl _starPlusToggle;
     private SideToggleControl _starMinusToggle;
 
+    private SideToggleControl _holdToggle;
     private SideToggleControl _hoverToggle;
 
     private SideToggleControl _hoverVerticalVelocityToggle;
@@ -239,6 +240,7 @@ public class MainWindowController : MonoBehaviour
         _starPlusToggle = _root.Q<SideToggleControl>("starplus");
         _starMinusToggle = _root.Q<SideToggleControl>("starminus");
 
+        _holdToggle = _root.Q<SideToggleControl>("hold");
         _hoverToggle = _root.Q<SideToggleControl>("hover");
 
         // Every mode toggle is mutually exclusive with every other one, across all tabs - build the
@@ -251,7 +253,7 @@ public class MainWindowController : MonoBehaviour
             _svelPlusToggle, _svelMinusToggle, _surfToggle, _hvelPlusToggle, _hvelMinusToggle, _upToggle,
             _targetPlusToggle, _relativeVelocityPlusToggle, _parPlusToggle, _targetMinusToggle, _relativeVelocityMinusToggle, _parMinusToggle,
             _starPlusToggle, _starMinusToggle,
-            _hoverToggle
+            _holdToggle, _hoverToggle
         };
 
         RegisterModeButton(_offToggle, () => SASManager.Instance.SetSASOff());
@@ -286,6 +288,7 @@ public class MainWindowController : MonoBehaviour
         RegisterModeButton(_starPlusToggle, () => SASManager.Instance.SetSpecialStarPlus());
         RegisterModeButton(_starMinusToggle, () => SASManager.Instance.SetSpecialStarMinus());
 
+        RegisterModeButton(_holdToggle, () => SASManager.Instance.SetHold());
         RegisterModeButton(_hoverToggle, () => SASManager.Instance.SetHover());
 
         _xToggle = _root.Q<SideToggleControl>("x-toggle");

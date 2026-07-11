@@ -280,6 +280,22 @@ Claude cannot drive the Unity editor to test in-engine). It has been replaced wi
    keyed off `GetAngleToRotation()`, itself fixed to reframe the vessel's current nose direction
    into `_rotation`'s coordinate system before comparing — same class of coordinate-mixing bug as
    #4, just affecting the refresh-rate heuristic rather than pointing accuracy).
+7. `Hold` (SPEC → HOLD, added 2026-07-11 per `.claude/enhancement_roadmap.md` item 1's "inertial
+   hold" recommendation) *does* go through the same H/P/R trim path as the pointing modes
+   (`ApplyOffsets` — factored out of `BuildPointingRotation` so both share it), but its "look" is a
+   one-time snapshot instead of a value recomputed from telemetry every tick: `SetHold()` captures
+   `vessel.ControlTransform.Rotation`, reframed into the game's actual non-rotating universe frame
+   (`GameManager.Instance.Game.UniverseModel.inertialReferenceFrame.inertialReferenceFrame` —
+   confirmed via decompile to be the same frame `VesselComponent.ParentToInertialReferenceFrame()`
+   uses), **not** `ControlTransform.Rotation`'s own coordinateSystem directly. That distinction is
+   the whole point of the mode: `ControlTransform`'s own frame is body/celestial-relative (it's
+   reparented on SOI change — `base.transform.parent = newReferenceBody.transform.celestialFrame`),
+   so holding a captured `localRotation` against it (which is what `KillRot` does) would silently
+   drift as the reference body rotates/orbits — reframing into the universe inertial frame first is
+   what makes Hold genuinely fixed in space instead of just `KillRot` under another name. The
+   snapshot is pre-multiplied by `QuaternionD.Euler(-90,0,0)` at capture time so it cancels exactly
+   against `ApplyOffsets`'s trailing `Euler(90,0,0)` (both are pure-X rotations, so they commute)
+   and reduces to the captured attitude unchanged when all three offsets are 0.
 
 **Diagnostics:** `SASManager` logs through ReduxLib's per-class logger
 (`SASExtended|SASManager`) — `LogInfo` on every mode change (`SetMode`), and a `LogDebug` line at

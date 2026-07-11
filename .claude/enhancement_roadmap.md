@@ -51,3 +51,14 @@ the 84 combinations are dead weight nobody will click. Do this instead:
 edit-mode tests) is now in place, so any new ADV/HOLD logic should be written directly into
 that tested layer (`Assets/SASExtended/Code/PureMath/`) instead of bolted onto the
 `SASManager.SetRotation` switch.
+
+**Update (2026-07-11, later).** The HOLD button is implemented: `AttitudeMode.Hold`,
+`SASManager.SetHold()`, and the `SPEC → HOLD` toggle in `MainWindowController`. It snapshots the
+vessel's attitude reframed into the game's actual universe inertial frame (not
+`ControlTransform.Rotation`'s own body/celestial-relative frame, which would have made it drift
+identically to `KillRot`) and reuses the existing H/P/R trim path (`ApplyOffsets`, factored out of
+`BuildPointingRotation`) — see `.claude/mod_specifics.md` point 7 under "Offset math" for the
+full derivation. **Not yet in-game verified** — needs a Unity build + real-vessel test (does the
+held direction actually stay fixed across a full orbit/time-warp, and does the universe-frame
+choice avoid any drift KillRot would have shown). The reference×direction dropdown (ADV proper)
+remains explicitly out of scope, per the analysis above — no update needed there.

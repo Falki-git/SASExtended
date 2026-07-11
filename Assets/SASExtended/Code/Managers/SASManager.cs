@@ -113,6 +113,13 @@ public class SASManager : MonoBehaviour
     // then just held, mirroring the game's own vanilla StabilityAssist ("SAS off, kill rotation, hold
     // whatever attitude you're currently at" - not pointed at any particular direction like north).
     private Rotation _killRotTarget;
+    // Attitude held for AttitudeMode.Hold - captured once at engage time (see SetHold), reframed into
+    // the universe's actual non-rotating inertial frame (NOT vessel.ControlTransform.Rotation's own
+    // coordinateSystem, which is body/celestial-frame-relative and would silently rotate with the
+    // reference body over time - see the SetHold comment). Pre-multiplied by Euler(-90,0,0) so it can
+    // be fed straight into ApplyOffsets/AttitudeMath.ComposePointingRotation like every other mode's
+    // LookRotation-built "look" value.
+    private Rotation _holdTarget;
     // The vessel that was active when the current AttitudeMode was engaged. _vessel (above) is a live
     // property that silently resolves to whatever vessel is active *now* - compared against this every
     // Update tick so a switch/undock/revert/scene-exit disengages instead of applying this vessel's
@@ -496,6 +503,15 @@ public class SASManager : MonoBehaviour
                 effZ = 0;
                 break;
 
+            case AttitudeMode.Hold:
+                // Unlike every mode above, the "look" here isn't recomputed from live telemetry each
+                // tick - _holdTarget is a fixed snapshot captured once at engage time (see SetHold), so
+                // the vessel holds the same direction in inertial space through orbital motion, SOI
+                // changes, and time warp. H/P/R trim still applies on top via the normal ApplyOffsets
+                // path (unlike KillRot, which has no trim panel at all).
+                _rotation = ApplyOffsets(_holdTarget, out effX, out effY, out effZ);
+                break;
+
             case AttitudeMode.Maneuver:
                 if (_telemetry.HasManeuver)
                 {
@@ -536,11 +552,16 @@ public class SASManager : MonoBehaviour
 
     // Builds the commanded attitude for a "point the nose at `target`" mode: LookRotation aligns local
     // up (the nose - see the trailing Euler(90,0,0)) with `target` exactly, then the H/P/R offsets are
-    // applied on top. A disabled H/P/R control isn't just forced to 0 - see GetCurrentOffsetAngles.
+    // applied on top via ApplyOffsets. A disabled H/P/R control isn't just forced to 0 - see
+    // GetCurrentOffsetAngles.
     private Rotation BuildPointingRotation(Vector target, Vector upHint, out double appliedX, out double appliedY, out double appliedZ)
-    {
-        var look = Rotation.LookRotation(target, upHint);
+        => ApplyOffsets(Rotation.LookRotation(target, upHint), out appliedX, out appliedY, out appliedZ);
 
+    // Shared H/P/R offset application, factored out of BuildPointingRotation so AttitudeMode.Hold (whose
+    // "look" is a captured attitude snapshot, not something built fresh from a target/upHint pair every
+    // tick) can reuse the exact same fixed-value-vs-free-track behavior as every other pointing mode.
+    private Rotation ApplyOffsets(Rotation look, out double appliedX, out double appliedY, out double appliedZ)
+    {
         appliedX = XEnabled ? X : 0;
         appliedY = YEnabled ? Y : 0;
         appliedZ = ZEnabled ? Z : 0;
@@ -697,6 +718,7 @@ public class SASManager : MonoBehaviour
     private void ResetPerVesselState()
     {
         _killRotTarget = default;
+        _holdTarget = default;
         _throttleIntegral = 0;
         _hoverThrottleIntegralKnown = false;
         _hoverCosTilt = 1.0;
@@ -714,6 +736,36 @@ public class SASManager : MonoBehaviour
         // steer toward any particular direction (see the comment on AttitudeMode.KillRot).
         _killRotTarget = vessel.ControlTransform.Rotation;
         SetMode(AttitudeMode.KillRot);
+    }
+
+    /// <summary>
+    /// Engages Hold: snapshots the vessel's current facing and locks to it, fixed in inertial space,
+    /// through orbital motion, SOI changes, and time warp - unlike every direction-vector mode above
+    /// (which tracks a frame that itself moves) and unlike KillRot (which - via
+    /// vessel.ControlTransform.Rotation's own body/celestial-relative coordinateSystem - holds an
+    /// attitude that would drift as the reference body rotates/orbits). The snapshot is reframed into
+    /// the game's actual universe inertial frame (GameManager...UniverseModel.inertialReferenceFrame.
+    /// inertialReferenceFrame - confirmed via decompile to be the frame VesselComponent's own
+    /// ParentToInertialReferenceFrame()/IsChildOfInertialReferenceFrame() use) before being held, so it
+    /// stays fixed in space rather than silently co-rotating with whatever frame ControlTransform
+    /// happens to be parented to right now.
+    /// </summary>
+    public void SetHold()
+    {
+        if (!TryGetVesselToEngage("Hold", out var vessel))
+            return;
+
+        var universeFrame = GameManager.Instance.Game.UniverseModel.inertialReferenceFrame.inertialReferenceFrame;
+        var snapshot = Rotation.Reframed(vessel.ControlTransform.Rotation, universeFrame);
+        // Pre-multiply by Euler(-90,0,0) so ApplyOffsets/AttitudeMath.ComposePointingRotation's trailing
+        // Euler(90,0,0) (baked in to remap LookRotation's Z-forward convention onto the nose/up axis -
+        // see BuildPointingRotation) cancels back out to exactly the captured attitude when all three
+        // offsets are 0: two rotations about the same (X) axis commute and simply cancel.
+        snapshot.localRotation *= QuaternionD.Euler(-90, 0, 0);
+        _holdTarget = snapshot;
+
+        SetMode(AttitudeMode.Hold);
+        _LOGGER.LogInfo("Hold engaged, snapshot captured in universe inertial frame.");
     }
 
     public void SetSASManeuver() => SetMode(AttitudeMode.Maneuver);
