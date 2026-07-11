@@ -49,6 +49,9 @@ namespace SASExtended.Utilities
         // "Hover" section
         public static ConfigValue<float> HoverVerticalVelocity;
 
+        // "Diagnostics" section
+        public static ConfigValue<bool> VerboseLoggingEnabled;
+
         public static void Initialize()
         {
             // WINDOW
@@ -117,6 +120,16 @@ namespace SASExtended.Utilities
                 "Vertical velocity (m/s)",
                 0f,
                 "Remembered target vertical speed for Hover mode."
+                ));
+
+            // DIAGNOSTICS
+            VerboseLoggingEnabled = new(Plugin.SWConfiguration.Bind(
+                "Diagnostics",
+                "Enable verbose SAS diagnostics logging",
+                false,
+                "Whether SetRotation/Hover build and emit their detailed per-tick debug log lines. " +
+                "Leave off unless troubleshooting - building these strings costs time every tick even " +
+                "when Debug-level logging is filtered out."
                 ));
         }
     }

@@ -15,6 +15,12 @@ public class SASManager : MonoBehaviour
 
     public static SASManager Instance { get; set; }
 
+    // Fired when SASManager disengages itself (vessel switch/undock/revert/scene-exit - see
+    // DisengageForVesselChange) rather than the player clicking a toggle. MainWindowController
+    // subscribes so the OFF button and Heading/Pitch/Roll fields don't keep showing a mode that
+    // silently stopped being engaged underneath the UI.
+    public event Action Disengaged;
+
     //public double X = 90, Y = 90, Z = 90;
     public double X = 0, Y = 0, Z = 0;
     public bool XEnabled = true, YEnabled = true, ZEnabled = true;
@@ -128,6 +134,14 @@ public class SASManager : MonoBehaviour
             DisengageForVesselChange(vessel);
             return;
         }
+
+        // vessel.Autopilot (unlike _vessel itself) can legitimately be null for a beat after a vessel
+        // becomes the active vessel - the game hasn't finished setting up its VesselAutopilot yet (its
+        // own VesselComponent.AutopilotStatus/SetAutopilotMode/SetAutopilotEnableDisable all guard this
+        // the same way). Skip this tick rather than NRE; _lastRefreshTime is deliberately left
+        // untouched so the very next tick retries immediately once Autopilot is ready.
+        if (vessel.Autopilot == null)
+            return;
 
         if (_UT - _lastRefreshTime > RefreshInterval /*DebugUI.Instance.RefreshInterval*/)
         {
@@ -408,11 +422,17 @@ public class SASManager : MonoBehaviour
                 _rotation = look;
                 _rotation.localRotation = look.localRotation * QuaternionD.Euler(0, 0, effZ) * QuaternionD.Euler(90, 0, 0);
 
-                _LOGGER.LogDebug(
-                    $"[Hover/attitude] horizontalSpeed={horizontalSpeed:F2}m/s horizontal={FormatVector(horizontal)} " +
-                    $"actualVerticalSpeed={actualVerticalSpeed:F2}m/s throttleIntegral={_throttleIntegral:F3} " +
-                    $"tiltFloor={tiltFloor:F2} maxAngleFloor={maxAngleFloor:F2} maxTiltAngleDeg={Math.Acos(Clamp(cosMaxTilt, -1.0, 1.0)) * 180.0 / Math.PI:F1} " +
-                    $"desired={FormatVector(desired)} hoverCosTilt={_hoverCosTilt:F3} refreshInterval={RefreshInterval:F3}s");
+                // Gated behind VerboseLoggingEnabled - ILogger.LogDebug takes a plain object, so an
+                // interpolated string passed directly would be built every tick regardless of whether
+                // Debug-level logging is even on. See enhancement_roadmap.md item 6.
+                if (Settings.VerboseLoggingEnabled.Value)
+                {
+                    _LOGGER.LogDebug(
+                        $"[Hover/attitude] horizontalSpeed={horizontalSpeed:F2}m/s horizontal={FormatVector(horizontal)} " +
+                        $"actualVerticalSpeed={actualVerticalSpeed:F2}m/s throttleIntegral={_throttleIntegral:F3} " +
+                        $"tiltFloor={tiltFloor:F2} maxAngleFloor={maxAngleFloor:F2} maxTiltAngleDeg={Math.Acos(Clamp(cosMaxTilt, -1.0, 1.0)) * 180.0 / Math.PI:F1} " +
+                        $"desired={FormatVector(desired)} hoverCosTilt={_hoverCosTilt:F3} refreshInterval={RefreshInterval:F3}s");
+                }
 
                 break;
             }
@@ -456,11 +476,16 @@ public class SASManager : MonoBehaviour
                 break;
         }
 
-        var angleToTarget = GetAngleToRotation();
-        _LOGGER.LogDebug(
-            $"[SetRotation] mode={AttitudeMode} offsets(H={effX:F1}[{XEnabled}],P={effY:F1}[{YEnabled}],R={effZ:F1}[{ZEnabled}]) angleToTarget={angleToTarget:F2}deg " +
-            $"upwards={FormatVector(upwards)} north={FormatVector(north)}" +
-            (loggedTarget.HasValue ? $" target={FormatVector(loggedTarget.Value)}" : ""));
+        // Gated behind VerboseLoggingEnabled (see the [Hover/attitude] comment above) - also skips the
+        // GetAngleToRotation() call itself, not just the string formatting.
+        if (Settings.VerboseLoggingEnabled.Value)
+        {
+            var angleToTarget = GetAngleToRotation();
+            _LOGGER.LogDebug(
+                $"[SetRotation] mode={AttitudeMode} offsets(H={effX:F1}[{XEnabled}],P={effY:F1}[{YEnabled}],R={effZ:F1}[{ZEnabled}]) angleToTarget={angleToTarget:F2}deg " +
+                $"upwards={FormatVector(upwards)} north={FormatVector(north)}" +
+                (loggedTarget.HasValue ? $" target={FormatVector(loggedTarget.Value)}" : ""));
+        }
     }
 
     private static string FormatVector(Vector v) => $"({v.vector.x:F3},{v.vector.y:F3},{v.vector.z:F3})";
@@ -538,13 +563,19 @@ public class SASManager : MonoBehaviour
     // before delegating to SetMode) needs the same "is there actually an active vessel" guard - clicking
     // a mode button with none active (e.g. between vessel destruction and a new one becoming active)
     // used to NRE here. See enhancement_roadmap.md item 4.
+    //
+    // Also requires vessel.Autopilot to already exist - it's a separate, independently-populated
+    // VesselAutopilot object that isn't guaranteed to be set the instant a vessel becomes _vessel (the
+    // game's own VesselComponent.AutopilotStatus/SetAutopilotMode/SetAutopilotEnableDisable all null-
+    // check it too). Engaging a mode before it exists would immediately NRE the next Update() tick.
     private bool TryGetVesselToEngage(string modeDescription, out VesselComponent vessel)
     {
         vessel = _vessel;
-        if (vessel != null)
+        if (vessel != null && vessel.Autopilot != null)
             return true;
 
-        _LOGGER.LogWarning($"Cannot engage {modeDescription}: no active vessel.");
+        _LOGGER.LogWarning($"Cannot engage {modeDescription}: no active vessel (or its autopilot isn't ready yet).");
+        vessel = null;
         return false;
     }
 
@@ -565,8 +596,10 @@ public class SASManager : MonoBehaviour
         AttitudeMode = AttitudeMode.None;
         // _vessel may no longer be the vessel we were actually engaged on (see Update/
         // DisengageForVesselChange) - deactivate whichever one we last commanded, not whatever's
-        // active now. Both may be null (no active vessel at all), hence the null-conditional.
-        _engagedVessel?.Autopilot.SetActive(false);
+        // active now. _engagedVessel and/or its Autopilot may be null (no active vessel at all, or a
+        // vessel switched away from and already torn down) - a single "?." only short-circuits on
+        // _engagedVessel itself being null, NOT on .Autopilot being null, so both are chained.
+        _engagedVessel?.Autopilot?.SetActive(false);
         _engagedVessel = null;
         ResetPerVesselState();
     }
@@ -580,9 +613,11 @@ public class SASManager : MonoBehaviour
             $"Active vessel changed ({_engagedVessel?.Name ?? "none"} -> {newVessel?.Name ?? "none"}) " +
             $"while {AttitudeMode} was engaged; disengaging SAS Extended.");
         AttitudeMode = AttitudeMode.None;
-        _engagedVessel?.Autopilot.SetActive(false);
+        // See the matching comment in SetSASOff - chain "?." through .Autopilot too, it can be null.
+        _engagedVessel?.Autopilot?.SetActive(false);
         _engagedVessel = null;
         ResetPerVesselState();
+        Disengaged?.Invoke();
     }
 
     // Per-vessel control-law state that must never carry over from one vessel to another - KillRot's
@@ -715,8 +750,10 @@ public class SASManager : MonoBehaviour
 
         // Runs every frame, so log on its own slower timer (independent of the attitude
         // RefreshInterval) to avoid flooding the log while still catching throttle saturation
-        // (pinned at 0 or 1) or a vertical-speed error that never settles.
-        if (_UT - _lastHoverLogTime > 0.25)
+        // (pinned at 0 or 1) or a vertical-speed error that never settles. Also gated behind
+        // VerboseLoggingEnabled (see the [Hover/attitude] comment above) - the 0.25s timer alone
+        // still built this string every quarter-second regardless of whether debug logging was on.
+        if (Settings.VerboseLoggingEnabled.Value && _UT - _lastHoverLogTime > 0.25)
         {
             _lastHoverLogTime = _UT;
             _LOGGER.LogDebug(
@@ -761,6 +798,13 @@ public class SASManager : MonoBehaviour
         // Update (which disengages AttitudeMode the moment _vessel no longer matches _engagedVessel) runs
         // before the UI's Update in the same frame.
         if (_vessel == null)
+            return 0;
+
+        // _rotation is only ever assigned inside SetRotation(), which Update() doesn't call until its
+        // own next tick - engaging a mode sets AttitudeMode immediately, so the UI can read this in the
+        // same frame before _rotation has ever been computed (default(Rotation).coordinateSystem is
+        // null, which Vector.Reframed below would NRE on).
+        if (_rotation.coordinateSystem == null)
             return 0;
 
         // _rotation.coordinateSystem is always our shared "referenceFrame" (see SetRotation), which is

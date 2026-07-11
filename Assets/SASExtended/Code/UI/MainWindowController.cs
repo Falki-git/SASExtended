@@ -29,6 +29,9 @@ public class MainWindowController : MonoBehaviour
     // The backing field for the IsWindowOpen property
     private bool _isWindowOpen;
 
+    // Guards the one-time SASManager.Disengaged subscription in Update() - see the comment there.
+    private bool _subscribedToSasManager;
+
     private SideToggleControl _offToggle;
     private SideToggleControl _killrotToggle;
     private SideToggleControl _nodeToggle;
@@ -434,6 +437,17 @@ public class MainWindowController : MonoBehaviour
     // (not cached) so toggling either in the in-game Settings -> Mods menu takes effect immediately.
     private void Update()
     {
+        // Deferred to here (rather than OnEnable) because SASManager.Instance is still null the first
+        // time OnEnable runs - see the comment on UpdatePanelForMode. Runs unconditionally (ahead of
+        // the IsWindowOpen gate below) so the subscription still happens even while the window starts
+        // out closed. Only ever fires once - style.display toggling doesn't re-run OnEnable/Update's
+        // subscription guard.
+        if (!_subscribedToSasManager && SASManager.Instance != null)
+        {
+            SASManager.Instance.Disengaged += OnSasManagerDisengaged;
+            _subscribedToSasManager = true;
+        }
+
         if (!IsWindowOpen || !Settings.StatusLoggingEnabled.Value)
             return;
 
@@ -442,6 +456,22 @@ public class MainWindowController : MonoBehaviour
         _lastStatusUpdateTime = Time.time;
 
         UpdateStatusLabel();
+    }
+
+    // SASManager disengaged itself (vessel switch/undock/revert/scene-exit - see
+    // SASManager.DisengageForVesselChange) rather than the player clicking a toggle - mirror what a
+    // manual OFF click does (RegisterModeButton's else branch) so the window doesn't keep showing a
+    // mode/offsets that are no longer actually engaged. Unlike that manual path, we don't know which
+    // toggle was previously active, so ClearAllModeToggles runs unconditionally rather than relying on
+    // every other toggle already being off.
+    private void OnSasManagerDisengaged()
+    {
+        ClearAllModeToggles(_offToggle);
+        _offToggle.SwitchToggleState(true, false);
+        _xValue.value = 0;
+        _yValue.value = 0;
+        _zValue.value = 0;
+        UpdateAttitudeColors();
     }
 
     // Status content depends on the active mode (enhancement_roadmap.md item 3): KillRot and Hover
