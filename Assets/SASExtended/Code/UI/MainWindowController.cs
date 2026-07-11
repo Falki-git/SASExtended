@@ -579,6 +579,15 @@ public class MainWindowController : MonoBehaviour
     {
         toggle.RegisterCallback<ClickEvent>(evt =>
         {
+            // SideToggleControl's own ClickEvent handler already no-ops on a disabled toggle, but it
+            // doesn't stop the event from propagating - without this guard a click on e.g. a greyed-out
+            // NODE/TGT button (see UpdateNodeTargetAvailability) falls through to the "was off, engage
+            // it" vs. "was on, turn off" branching below. A disabled toggle is always untoggled, so it
+            // took the turn-off branch: SetSASOff() actually disengaged, while the real active toggle
+            // was never cleared, leaving it visually checked with SAS Extended silently off.
+            if (!toggle.IsEnabled)
+                return;
+
             if (toggle.IsToggled)
             {
                 ClearAllModeToggles(toggle);
