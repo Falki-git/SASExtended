@@ -152,6 +152,20 @@ A `publicize.bat` (NStrip) exists to produce an all-public copy, but:
   (`GetType()` can't be used in a field initializer, so assign in the constructor there.
   Decompiled game code uses `Debug.Log*` heavily — that's the game, not you.)
 
+## Game log
+
+The KSP2 player log — including this mod's `ReduxLib` logger output, stack traces, and Unity
+errors — is written to:
+
+```
+C:\Users\gfalk\AppData\LocalLow\Intercept Games\Kerbal Space Program 2\Player.log
+```
+
+Check this file directly (read it) whenever debugging a runtime issue, verifying a fix, or
+when the user reports unexpected in-game behavior — don't wait for the user to paste log
+contents or state the path. The file is **overwritten fresh each time the game runs**, so its
+current contents always reflect the most recent test session only.
+
 ## PatchManager Lua patches (Redux6)
 
 Redux6 **does not expose a C# patching API for game content**. Changes to game content
