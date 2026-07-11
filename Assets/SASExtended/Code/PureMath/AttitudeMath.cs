@@ -4,8 +4,7 @@ namespace SASExtended.PureMath
     // (see SASManager.BuildPointingRotation/GetCurrentOffsetAngles). Deliberately kept free of
     // KSP.Sim's frame-aware Vector/Rotation wrappers (which need a live ICoordinateSystem) so this
     // can be validated with edit-mode tests instead of only via an in-game build - see
-    // enhancement_roadmap.md item 2 and hover_mode_fixes.md for the debugging cost that motivated
-    // this split.
+    // hover_mode_fixes.md for the debugging cost that motivated this split.
     //
     // Namespace deliberately isn't "SASExtended.Math" - nested-namespace lookup would then shadow
     // System.Math for every unqualified "Math.*" call anywhere under the SASExtended.* namespace

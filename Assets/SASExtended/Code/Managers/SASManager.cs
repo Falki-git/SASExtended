@@ -27,10 +27,9 @@ public class SASManager : MonoBehaviour
     public AttitudeMode AttitudeMode = AttitudeMode.None;
     public bool IsHoverActive => AttitudeMode == AttitudeMode.Hover;
 
-    // Read by MainWindowController to grey out the NODE button / TGT-tab mode buttons
-    // (enhancement_roadmap.md item 2) and by Update() below to auto-disengage if the node/target
-    // disappears while its mode is active. _vessel is guarded first since _telemetry (a property,
-    // not a field) NREs on a null _vessel.
+    // Read by MainWindowController to grey out the NODE button / TGT-tab mode buttons and by
+    // Update() below to auto-disengage if the node/target disappears while its mode is active.
+    // _vessel is guarded first since _telemetry (a property, not a field) NREs on a null _vessel.
     public bool HasManeuverNode => _vessel != null && _telemetry.HasManeuver;
     public bool HasTarget => _vessel != null && _telemetry.HasTargetObject;
 
@@ -124,7 +123,7 @@ public class SASManager : MonoBehaviour
     // property that silently resolves to whatever vessel is active *now* - compared against this every
     // Update tick so a switch/undock/revert/scene-exit disengages instead of applying this vessel's
     // captured per-vessel state (_killRotTarget, the Hover throttle integrator/filters) to a different
-    // vessel. See enhancement_roadmap.md item 4.
+    // vessel.
     private VesselComponent _engagedVessel;
 
     private void Start()
@@ -146,7 +145,7 @@ public class SASManager : MonoBehaviour
         // engaged on, the active vessel was switched/undocked/reverted out from under us, or flight
         // was exited entirely (_vessel goes null). Disengage rather than silently applying this
         // vessel's captured state (KillRot's held attitude, Hover's throttle integrator) to whatever
-        // vessel is active now. See enhancement_roadmap.md item 4.
+        // vessel is active now.
         var vessel = _vessel;
         if (vessel == null || vessel != _engagedVessel)
         {
@@ -166,7 +165,6 @@ public class SASManager : MonoBehaviour
         // (see the fallback branches in SetRotation/BuildTargetOrientationRotation) - the button
         // stayed lit as if still tracking with no way to tell. Auto-disengage to OFF instead, same
         // as a vessel switch, so the UI honestly reflects that the mode stopped doing anything.
-        // See enhancement_roadmap.md item 2.
         if (AttitudeMode == AttitudeMode.Maneuver && !_telemetry.HasManeuver)
         {
             DisengageForLostReference("Maneuver node was removed");
@@ -179,7 +177,7 @@ public class SASManager : MonoBehaviour
             return;
         }
 
-        // Two-way sync with stock SAS (enhancement_roadmap.md item 1): we only ever drive the
+        // Two-way sync with stock SAS: we only ever drive the
         // vessel through Autopilot.SetActive(true) (-> Activate(StabilityAssist)) followed by
         // SAS.LockRotation, so Enabled and AutopilotMode should always read back exactly
         // (true, StabilityAssist) while one of our modes is engaged. If either has drifted, something
@@ -239,8 +237,8 @@ public class SASManager : MonoBehaviour
         //
         // Only "north" and "upwards" are hoisted here - every mode-specific direction vector below is
         // computed lazily inside its own switch case instead (AttitudeMode is single-valued, so only
-        // one case's vector(s) are ever needed per tick; see enhancement_roadmap.md item 5). This cuts
-        // per-tick Vector.Reframed calls from ~18 down to 1 (2 for negated +/- pairs).
+        // one case's vector(s) are ever needed per tick). This cuts per-tick Vector.Reframed calls
+        // from ~18 down to 1 (2 for negated +/- pairs).
         var north = _telemetry.HorizonNorth;
         var referenceFrame = north.coordinateSystem;
         var upwards = Vector.Reframed(Vector.normalize(Position.Delta(_telemetry.RootPosition, _telemetry.SOIPosition)), referenceFrame);
@@ -480,7 +478,7 @@ public class SASManager : MonoBehaviour
 
                 // Gated behind VerboseLoggingEnabled - ILogger.LogDebug takes a plain object, so an
                 // interpolated string passed directly would be built every tick regardless of whether
-                // Debug-level logging is even on. See enhancement_roadmap.md item 6.
+                // Debug-level logging is even on.
                 if (Settings.VerboseLoggingEnabled.Value)
                 {
                     _LOGGER.LogDebug(
@@ -625,7 +623,7 @@ public class SASManager : MonoBehaviour
     // Every mode-engage entry point (SetMode itself, and SetSASKillrot/SetHover which touch _vessel
     // before delegating to SetMode) needs the same "is there actually an active vessel" guard - clicking
     // a mode button with none active (e.g. between vessel destruction and a new one becoming active)
-    // used to NRE here. See enhancement_roadmap.md item 4.
+    // used to NRE here.
     //
     // Also requires vessel.Autopilot to already exist - it's a separate, independently-populated
     // VesselAutopilot object that isn't guaranteed to be set the instant a vessel becomes _vessel (the
@@ -680,7 +678,7 @@ public class SASManager : MonoBehaviour
 
     // Fired from Update() when the maneuver node/target the current mode depends on disappears
     // (node deleted/executed, target cleared) - same cleanup as DisengageForVesselChange above,
-    // just a different trigger. See enhancement_roadmap.md item 2.
+    // just a different trigger.
     private void DisengageForLostReference(string reason)
     {
         _LOGGER.LogInfo($"{reason} while {AttitudeMode} was engaged; disengaging SAS Extended.");
@@ -694,7 +692,6 @@ public class SASManager : MonoBehaviour
     // deactivated by the game's own T-key handler) - calling SetActive(false) here would immediately
     // fight the very input that triggered this disengage (e.g. force stock SAS off right after the
     // player turned on Prograde). We only need to stop OUR tracking and reset our own UI/state.
-    // See enhancement_roadmap.md item 1.
     private void DisengageForExternalChange()
     {
         _LOGGER.LogInfo($"Stock SAS was changed externally while {AttitudeMode} was engaged; disengaging SAS Extended.");
@@ -900,8 +897,8 @@ public class SASManager : MonoBehaviour
     }
 
     // Public: also read by MainWindowController for the status readout's generic angle-to-target line
-    // (every pointing mode - ORB/SURF/TGT/SPEC/Node/TGT PAR - shares this, per enhancement_roadmap.md
-    // item 3; KillRot/Hover don't point anywhere, so they use their own readouts below instead).
+    // (every pointing mode - ORB/SURF/TGT/SPEC/Node/TGT PAR - shares this; KillRot/Hover don't point
+    // anywhere, so they use their own readouts below instead).
     public double GetAngleToRotation()
     {
         // Guards the same one-frame window as GetAngularVelocityDegPerSec below: the UI (MainWindowController)

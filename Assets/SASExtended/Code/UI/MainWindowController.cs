@@ -468,7 +468,7 @@ public class MainWindowController : MonoBehaviour
     }
 
     // NODE has no maneuver node to point at, and the six TGT-tab direction modes have no target,
-    // when HasManeuverNode/HasTarget is false (enhancement_roadmap.md item 2) - grey those buttons
+    // when HasManeuverNode/HasTarget is false - grey those buttons
     // out rather than leaving them clickable with nothing to do. The TGT tab toggle itself is left
     // alone so the tab stays browsable even with no target selected. Auto-switching back to OFF when
     // the reference disappears mid-engage is handled in SASManager.Update (DisengageForLostReference).
@@ -514,7 +514,7 @@ public class MainWindowController : MonoBehaviour
         UpdateAttitudeColors();
     }
 
-    // Status content depends on the active mode (enhancement_roadmap.md item 3): KillRot and Hover
+    // Status content depends on the active mode: KillRot and Hover
     // don't point anywhere, so an angle-to-target isn't meaningful for either and they get their own
     // bespoke readouts; every other mode (including Node/TGT PAR, even while their fallback holds
     // current attitude - see SASManager.SetRotation) shares the generic angle-to-target + free-axis

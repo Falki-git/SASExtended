@@ -280,8 +280,8 @@ Claude cannot drive the Unity editor to test in-engine). It has been replaced wi
    keyed off `GetAngleToRotation()`, itself fixed to reframe the vessel's current nose direction
    into `_rotation`'s coordinate system before comparing — same class of coordinate-mixing bug as
    #4, just affecting the refresh-rate heuristic rather than pointing accuracy).
-7. `Hold` (SPEC → HOLD, added 2026-07-11 per `.claude/enhancement_roadmap.md` item 1's "inertial
-   hold" recommendation) *does* go through the same H/P/R trim path as the pointing modes
+7. `Hold` (SPEC → HOLD, added 2026-07-11 as an "inertial hold" mode) *does* go through the same
+   H/P/R trim path as the pointing modes
    (`ApplyOffsets` — factored out of `BuildPointingRotation` so both share it), but its "look" is a
    one-time snapshot instead of a value recomputed from telemetry every tick: `SetHold()` captures
    `vessel.ControlTransform.Rotation`, reframed into the game's actual non-rotating universe frame
