@@ -25,7 +25,6 @@ namespace SASExtended
 
         // AppBar button IDs
         internal const string ToolbarFlightButtonID = "BTN-SASExtendedFlight";
-        internal const string ToolbarOabButtonID = "BTN-SASExtendedOAB";
         internal const string ToolbarKscButtonID = "BTN-SASExtendedKSC";
 
         // Addressable keys for this mod's UI assets.

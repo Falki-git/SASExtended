@@ -30,8 +30,6 @@ namespace SASExtended.Models
         SpecialStarPlus,
         SpecialStarMinus,
 
-        Hover,
-
-        Horizon
+        Hover
     }
 }
