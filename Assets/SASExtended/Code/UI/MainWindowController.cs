@@ -373,9 +373,14 @@ public class MainWindowController : MonoBehaviour
         _hoverVerticalVelocityToggle.SetEnabled(false);
 
         _hoverVerticalVelocityValue = _hoverControlsContainer.Q<FloatField>("ver-vel-value");
+        // Set before registering the callback below, so displaying the remembered value on window
+        // creation doesn't immediately re-trigger a (harmless but pointless) save.
+        _hoverVerticalVelocityValue.value = Settings.HoverVerticalVelocity.Value;
         _hoverVerticalVelocityValue.RegisterValueChangedCallback(evt =>
         {
             SASManager.Instance.HoverTargetVerticalSpeed = evt.newValue;
+            Settings.HoverVerticalVelocity.Value = evt.newValue;
+            SASExtendedPlugin.Instance.SWConfiguration.Save();
         });
 
         _hoverVerticalVelocityMinus = _hoverControlsContainer.Q<Button>("ver-vel-minus");
@@ -506,6 +511,7 @@ public class MainWindowController : MonoBehaviour
             {
                 ClearAllModeToggles(toggle);
                 setMode();
+                ApplyStoredOffsetsForCurrentMode();
 
                 // OFF and KillRot have no control panel of their own (KillRot doesn't expose
                 // Heading/Pitch/Roll offsets - it just holds current attitude) - only a mode with
@@ -523,6 +529,20 @@ public class MainWindowController : MonoBehaviour
 
             UpdateAttitudeColors();
         });
+    }
+
+    // Loads the just-engaged mode's remembered Heading/Pitch/Roll (Settings.AttitudeOffsets) into the
+    // x/y/z FloatFields, which cascades into SASManager.X/Y/Z via OnXChanged/OnYChanged/OnZChanged
+    // below. Modes without a stored entry (OFF, KillRot, Hover - see Settings.AttitudeOffsets) leave
+    // the fields untouched, since none of them use the generic offset mechanism.
+    private void ApplyStoredOffsetsForCurrentMode()
+    {
+        if (!Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))
+            return;
+
+        _xValue.value = offsets.Heading.Value;
+        _yValue.value = offsets.Pitch.Value;
+        _zValue.value = offsets.Roll.Value;
     }
 
     private void ClearAllModeToggles(SideToggleControl except)
@@ -677,15 +697,31 @@ public class MainWindowController : MonoBehaviour
     private void OnXChanged(ChangeEvent<float> evt)
     {
         SASManager.Instance.X = evt.newValue;
+        if (Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))
+        {
+            offsets.Heading.Value = evt.newValue;
+            SASExtendedPlugin.Instance.SWConfiguration.Save();
+        }
     }
 
     private void OnYChanged(ChangeEvent<float> evt)
     {
         SASManager.Instance.Y = evt.newValue;
+        if (Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))
+        {
+            offsets.Pitch.Value = evt.newValue;
+            SASExtendedPlugin.Instance.SWConfiguration.Save();
+        }
     }
+
     private void OnZChanged(ChangeEvent<float> evt)
     {
         SASManager.Instance.Z = evt.newValue;
+        if (Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))
+        {
+            offsets.Roll.Value = evt.newValue;
+            SASExtendedPlugin.Instance.SWConfiguration.Save();
+        }
     }
 }
 }
