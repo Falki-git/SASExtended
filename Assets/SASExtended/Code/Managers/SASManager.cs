@@ -15,11 +15,29 @@ public class SASManager : MonoBehaviour
 
     public static SASManager Instance { get; set; }
 
+    // Fired when SASManager disengages itself (vessel switch/undock/revert/scene-exit - see
+    // DisengageForVesselChange) rather than the player clicking a toggle. MainWindowController
+    // subscribes so the OFF button and Heading/Pitch/Roll fields don't keep showing a mode that
+    // silently stopped being engaged underneath the UI.
+    public event Action Disengaged;
+
     //public double X = 90, Y = 90, Z = 90;
     public double X = 0, Y = 0, Z = 0;
     public bool XEnabled = true, YEnabled = true, ZEnabled = true;
     public AttitudeMode AttitudeMode = AttitudeMode.None;
     public bool IsHoverActive => AttitudeMode == AttitudeMode.Hover;
+
+    // Read by MainWindowController to grey out the NODE button / TGT-tab mode buttons
+    // (enhancement_roadmap.md item 2) and by Update() below to auto-disengage if the node/target
+    // disappears while its mode is active. _vessel is guarded first since _telemetry (a property,
+    // not a field) NREs on a null _vessel.
+    public bool HasManeuverNode => _vessel != null && _telemetry.HasManeuver;
+    public bool HasTarget => _vessel != null && _telemetry.HasTargetObject;
+
+    private static bool IsTargetMode(AttitudeMode mode) =>
+        mode is AttitudeMode.TargetPlus or AttitudeMode.TargetMinus or
+                AttitudeMode.TargetRvelPlus or AttitudeMode.TargetRvelMinus or
+                AttitudeMode.TargetParPlus or AttitudeMode.TargetParMinus;
 
     public double RefreshInterval = 0;
     public double RefreshInterval_short = 0.02;
@@ -95,6 +113,12 @@ public class SASManager : MonoBehaviour
     // then just held, mirroring the game's own vanilla StabilityAssist ("SAS off, kill rotation, hold
     // whatever attitude you're currently at" - not pointed at any particular direction like north).
     private Rotation _killRotTarget;
+    // The vessel that was active when the current AttitudeMode was engaged. _vessel (above) is a live
+    // property that silently resolves to whatever vessel is active *now* - compared against this every
+    // Update tick so a switch/undock/revert/scene-exit disengages instead of applying this vessel's
+    // captured per-vessel state (_killRotTarget, the Hover throttle integrator/filters) to a different
+    // vessel. See enhancement_roadmap.md item 4.
+    private VesselComponent _engagedVessel;
 
     private void Start()
     {
@@ -108,13 +132,74 @@ public class SASManager : MonoBehaviour
 
     private void Update()
     {
-        if (AttitudeMode == AttitudeMode.None || _vessel == null)
+        if (AttitudeMode == AttitudeMode.None)
             return;
+
+        // _vessel is a live lookup (GetActiveSimVessel()) - if it no longer matches the vessel we
+        // engaged on, the active vessel was switched/undocked/reverted out from under us, or flight
+        // was exited entirely (_vessel goes null). Disengage rather than silently applying this
+        // vessel's captured state (KillRot's held attitude, Hover's throttle integrator) to whatever
+        // vessel is active now. See enhancement_roadmap.md item 4.
+        var vessel = _vessel;
+        if (vessel == null || vessel != _engagedVessel)
+        {
+            DisengageForVesselChange(vessel);
+            return;
+        }
+
+        // vessel.Autopilot (unlike _vessel itself) can legitimately be null for a beat after a vessel
+        // becomes the active vessel - the game hasn't finished setting up its VesselAutopilot yet (its
+        // own VesselComponent.AutopilotStatus/SetAutopilotMode/SetAutopilotEnableDisable all guard this
+        // the same way). Skip this tick rather than NRE; _lastRefreshTime is deliberately left
+        // untouched so the very next tick retries immediately once Autopilot is ready.
+        if (vessel.Autopilot == null)
+            return;
+
+        // Maneuver/Target modes silently held current attitude when their reference disappeared
+        // (see the fallback branches in SetRotation/BuildTargetOrientationRotation) - the button
+        // stayed lit as if still tracking with no way to tell. Auto-disengage to OFF instead, same
+        // as a vessel switch, so the UI honestly reflects that the mode stopped doing anything.
+        // See enhancement_roadmap.md item 2.
+        if (AttitudeMode == AttitudeMode.Maneuver && !_telemetry.HasManeuver)
+        {
+            DisengageForLostReference("Maneuver node was removed");
+            return;
+        }
+
+        if (IsTargetMode(AttitudeMode) && !_telemetry.HasTargetObject)
+        {
+            DisengageForLostReference("Target was lost");
+            return;
+        }
+
+        // Two-way sync with stock SAS (enhancement_roadmap.md item 1): we only ever drive the
+        // vessel through Autopilot.SetActive(true) (-> Activate(StabilityAssist)) followed by
+        // SAS.LockRotation, so Enabled and AutopilotMode should always read back exactly
+        // (true, StabilityAssist) while one of our modes is engaged. If either has drifted, something
+        // external changed stock SAS out from under us - the player pressed T / clicked the SAS
+        // toggle off (Enabled -> false) or clicked a stock direction button / hotkey (AutopilotMode ->
+        // Prograde/Retrograde/Target/Maneuver/etc.). Disengaging here (rather than just letting our
+        // next LockRotation silently fight the stock input) both stops the fight and - via the shared
+        // Disengaged event - flips the UI back to OFF so it doesn't keep showing a mode we no longer
+        // actually control.
+        //
+        // Polled here instead of subscribing to SASEnabledMessage/SASDisabledMessage/
+        // SASModeChangedMessage as the roadmap item originally suggested: decompiling
+        // VesselComponent.SetAutopilotEnableDisable confirmed those three only fire together, on the
+        // Enabled/Disabled transition (T key) - stock direction-button clicks route through
+        // TelemetryDataProvider.SetAutopilotMode -> VesselComponent.SetState -> SetAutopilotMode
+        // without publishing anything. A pure message subscription would miss that second case
+        // entirely; polling the two fields we already read every tick catches both uniformly.
+        if (!vessel.Autopilot.Enabled || vessel.Autopilot.AutopilotMode != AutopilotMode.StabilityAssist)
+        {
+            DisengageForExternalChange();
+            return;
+        }
 
         if (_UT - _lastRefreshTime > RefreshInterval /*DebugUI.Instance.RefreshInterval*/)
         {
             SetRotation();
-            _vessel.Autopilot.SAS.LockRotation(_rotation);
+            vessel.Autopilot.SAS.LockRotation(_rotation);
             _lastRefreshTime = _UT;
 
             SetRefreshInterval();
@@ -148,51 +233,23 @@ public class SASManager : MonoBehaviour
         // right — but Normal/AntiNormal/RadialIn/RadialOut come from a frame that's drastically rotated
         // relative to the horizon frame, so the un-reframed math was comparing directions expressed in
         // unrelated bases. Fix: reframe every vector into HorizonNorth's coordinateSystem up front.
+        //
+        // Only "north" and "upwards" are hoisted here - every mode-specific direction vector below is
+        // computed lazily inside its own switch case instead (AttitudeMode is single-valued, so only
+        // one case's vector(s) are ever needed per tick; see enhancement_roadmap.md item 5). This cuts
+        // per-tick Vector.Reframed calls from ~18 down to 1 (2 for negated +/- pairs).
         var north = _telemetry.HorizonNorth;
         var referenceFrame = north.coordinateSystem;
-        var west = _telemetry.HorizonWest;
-        var east = _telemetry.HorizonEast;
-        var south = _telemetry.HorizonSouth;
-
-        var orbitPrograde = Vector.Reframed(Vector.normalize(_telemetry.OrbitalMovementVelocity), referenceFrame);
-        var orbitRetrograde = Vector.negate(orbitPrograde);
-        var orbitNormal = Vector.Reframed(_telemetry.OrbitMovementNormal, referenceFrame);
-        var orbitAntiNormal = Vector.negate(orbitNormal);
-        var orbitRadialIn = Vector.Reframed(_telemetry.OrbitMovementRadialIn, referenceFrame);
-        var orbitRadialOut = Vector.Reframed(_telemetry.OrbitMovementRadialOut, referenceFrame);
-
-        var surfacePrograde = Vector.Reframed(Vector.normalize(_telemetry.SurfaceMovementPrograde), referenceFrame);
-        var surfaceRetrograde = Vector.negate(surfacePrograde);
-        var target = Vector.Reframed(Vector.normalize(_telemetry.TargetDirection), referenceFrame);
-        var antiTarget = Vector.negate(target);
-
-        // Vessel's velocity relative to the target (MechJeb's RELATIVE_VELOCITY) - confirmed via
-        // decompile that TelemetryComponent computes TargetPrograde as exactly
-        // normalize(OrbitalMovementVelocity - targetOrbitalVelocity), i.e. relative velocity, not
-        // orbital prograde around the target.
-        var targetRelativePrograde = Vector.Reframed(_telemetry.TargetPrograde, referenceFrame);
-        var targetRelativeRetrograde = Vector.negate(targetRelativePrograde);
-
-        var maneuver = Vector.Reframed(Vector.normalize(_telemetry.ManeuverDirection), referenceFrame);
-
-        var sunBody = GetParentStar(_vessel);
-        var sun = Vector.Reframed(Vector.normalize(Position.Delta(sunBody.Position, _telemetry.RootPosition)), referenceFrame);
-        var antiSun = Vector.negate(sun);
-
         var upwards = Vector.Reframed(Vector.normalize(Position.Delta(_telemetry.RootPosition, _telemetry.SOIPosition)), referenceFrame);
-
-        // Horizontal component of surface velocity (vertical component projected out via the same
-        // dot/minus pattern Hover already uses for its tilt calc - Vector.dot/minus reframe their
-        // second argument into the first's coordinateSystem automatically, so mixing the unreframed
-        // telemetry vector with the already-reframed "upwards" here is safe).
-        var horizontalVelocity = Vector.Reframed(
-            Vector.normalize(Vector.minus(_telemetry.SurfaceMovementVelocity, Vector.scale(upwards, Vector.dot(_telemetry.SurfaceMovementVelocity, upwards)))),
-            referenceFrame);
-        var antiHorizontalVelocity = Vector.negate(horizontalVelocity);
 
         // Values actually commanded this tick - populated per-branch below (a disabled H/P/R control
         // doesn't just force its value to 0; see BuildPointingRotation/GetCurrentOffsetAngles).
         double effX, effY, effZ;
+
+        // Whatever direction the active mode actually pointed at this tick, purely for the trailing
+        // debug log below - left null for modes that don't point anywhere (KillRot, Hover - which has
+        // its own dedicated [Hover/attitude] log line - and the no-maneuver/no-target fallbacks).
+        Vector? loggedTarget = null;
 
         switch (AttitudeMode)
         {
@@ -204,52 +261,124 @@ public class SASManager : MonoBehaviour
             // directly aligns local "up" (the vessel's nose axis - see Euler(90,0,0)) with the target
             // with zero error for any target/upwards pair.
             case AttitudeMode.OrbitPrograde:
+            {
+                var orbitPrograde = Vector.Reframed(Vector.normalize(_telemetry.OrbitalMovementVelocity), referenceFrame);
                 _rotation = BuildPointingRotation(orbitPrograde, upwards, out effX, out effY, out effZ);
+                loggedTarget = orbitPrograde;
                 break;
+            }
             case AttitudeMode.OrbitRetrograde:
+            {
+                var orbitRetrograde = Vector.negate(Vector.Reframed(Vector.normalize(_telemetry.OrbitalMovementVelocity), referenceFrame));
                 _rotation = BuildPointingRotation(orbitRetrograde, upwards, out effX, out effY, out effZ);
+                loggedTarget = orbitRetrograde;
                 break;
+            }
             case AttitudeMode.OrbitNormal:
+            {
+                var orbitNormal = Vector.Reframed(_telemetry.OrbitMovementNormal, referenceFrame);
                 _rotation = BuildPointingRotation(orbitNormal, upwards, out effX, out effY, out effZ);
+                loggedTarget = orbitNormal;
                 break;
+            }
             case AttitudeMode.OrbitAntiNormal:
+            {
+                var orbitAntiNormal = Vector.negate(Vector.Reframed(_telemetry.OrbitMovementNormal, referenceFrame));
                 _rotation = BuildPointingRotation(orbitAntiNormal, upwards, out effX, out effY, out effZ);
+                loggedTarget = orbitAntiNormal;
                 break;
+            }
             case AttitudeMode.OrbitRadialIn:
+            {
+                var orbitRadialIn = Vector.Reframed(_telemetry.OrbitMovementRadialIn, referenceFrame);
                 _rotation = BuildPointingRotation(orbitRadialIn, upwards, out effX, out effY, out effZ);
+                loggedTarget = orbitRadialIn;
                 break;
+            }
             case AttitudeMode.OrbitRadialOut:
+            {
+                var orbitRadialOut = Vector.Reframed(_telemetry.OrbitMovementRadialOut, referenceFrame);
                 _rotation = BuildPointingRotation(orbitRadialOut, upwards, out effX, out effY, out effZ);
+                loggedTarget = orbitRadialOut;
                 break;
+            }
 
 
             case AttitudeMode.SurfaceSurf:
                 _rotation = BuildPointingRotation(north, upwards, out effX, out effY, out effZ);
+                loggedTarget = north;
                 break;
             case AttitudeMode.SurfaceSvelPlus:
+            {
+                var surfacePrograde = Vector.Reframed(Vector.normalize(_telemetry.SurfaceMovementPrograde), referenceFrame);
                 _rotation = BuildPointingRotation(surfacePrograde, upwards, out effX, out effY, out effZ);
+                loggedTarget = surfacePrograde;
                 break;
+            }
             case AttitudeMode.SurfaceSvelMinus:
+            {
+                var surfaceRetrograde = Vector.negate(Vector.Reframed(Vector.normalize(_telemetry.SurfaceMovementPrograde), referenceFrame));
                 _rotation = BuildPointingRotation(surfaceRetrograde, upwards, out effX, out effY, out effZ);
+                loggedTarget = surfaceRetrograde;
                 break;
+            }
             case AttitudeMode.SurfaceHvelPlus:
+            {
+                // Horizontal component of surface velocity (vertical component projected out via the
+                // same dot/minus pattern Hover already uses for its tilt calc - Vector.dot/minus
+                // reframe their second argument into the first's coordinateSystem automatically, so
+                // mixing the unreframed telemetry vector with the already-reframed "upwards" here is
+                // safe).
+                var horizontalVelocity = Vector.Reframed(
+                    Vector.normalize(Vector.minus(_telemetry.SurfaceMovementVelocity, Vector.scale(upwards, Vector.dot(_telemetry.SurfaceMovementVelocity, upwards)))),
+                    referenceFrame);
                 _rotation = BuildPointingRotation(horizontalVelocity, upwards, out effX, out effY, out effZ);
+                loggedTarget = horizontalVelocity;
                 break;
+            }
             case AttitudeMode.SurfaceHvelMinus:
+            {
+                // Same horizontal-velocity projection as SurfaceHvelPlus (see comment there), negated.
+                var antiHorizontalVelocity = Vector.negate(Vector.Reframed(
+                    Vector.normalize(Vector.minus(_telemetry.SurfaceMovementVelocity, Vector.scale(upwards, Vector.dot(_telemetry.SurfaceMovementVelocity, upwards)))),
+                    referenceFrame));
                 _rotation = BuildPointingRotation(antiHorizontalVelocity, upwards, out effX, out effY, out effZ);
+                loggedTarget = antiHorizontalVelocity;
                 break;
+            }
             case AttitudeMode.TargetPlus:
+            {
+                var target = Vector.Reframed(Vector.normalize(_telemetry.TargetDirection), referenceFrame);
                 _rotation = BuildPointingRotation(target, upwards, out effX, out effY, out effZ);
+                loggedTarget = target;
                 break;
+            }
             case AttitudeMode.TargetMinus:
+            {
+                var antiTarget = Vector.negate(Vector.Reframed(Vector.normalize(_telemetry.TargetDirection), referenceFrame));
                 _rotation = BuildPointingRotation(antiTarget, upwards, out effX, out effY, out effZ);
+                loggedTarget = antiTarget;
                 break;
+            }
             case AttitudeMode.TargetRvelPlus:
+            {
+                // Vessel's velocity relative to the target (MechJeb's RELATIVE_VELOCITY) - confirmed
+                // via decompile that TelemetryComponent computes TargetPrograde as exactly
+                // normalize(OrbitalMovementVelocity - targetOrbitalVelocity), i.e. relative velocity,
+                // not orbital prograde around the target.
+                var targetRelativePrograde = Vector.Reframed(_telemetry.TargetPrograde, referenceFrame);
                 _rotation = BuildPointingRotation(targetRelativePrograde, upwards, out effX, out effY, out effZ);
+                loggedTarget = targetRelativePrograde;
                 break;
+            }
             case AttitudeMode.TargetRvelMinus:
+            {
+                // Negation of the target-relative velocity described above TargetRvelPlus.
+                var targetRelativeRetrograde = Vector.negate(Vector.Reframed(_telemetry.TargetPrograde, referenceFrame));
                 _rotation = BuildPointingRotation(targetRelativeRetrograde, upwards, out effX, out effY, out effZ);
+                loggedTarget = targetRelativeRetrograde;
                 break;
+            }
             case AttitudeMode.TargetParPlus:
                 _rotation = BuildTargetOrientationRotation(reversed: false, upwards, out effX, out effY, out effZ);
                 break;
@@ -261,16 +390,27 @@ public class SASManager : MonoBehaviour
             // Offset math section of mod_specifics.md); wired to the UI but not yet re-verified
             // in-game.
             case AttitudeMode.SpecialStarPlus:
+            {
+                var sunBody = GetParentStar(_vessel);
+                var sun = Vector.Reframed(Vector.normalize(Position.Delta(sunBody.Position, _telemetry.RootPosition)), referenceFrame);
                 _rotation = BuildPointingRotation(sun, upwards, out effX, out effY, out effZ);
+                loggedTarget = sun;
                 break;
+            }
             case AttitudeMode.SpecialStarMinus:
+            {
+                var sunBody = GetParentStar(_vessel);
+                var antiSun = Vector.negate(Vector.Reframed(Vector.normalize(Position.Delta(sunBody.Position, _telemetry.RootPosition)), referenceFrame));
                 _rotation = BuildPointingRotation(antiSun, upwards, out effX, out effY, out effZ);
+                loggedTarget = antiSun;
                 break;
+            }
             case AttitudeMode.SurfaceUp:
                 // Target is "upwards" itself, so it can't also be used as LookRotation's up-hint
                 // (degenerate/parallel) - use "north" as the hint instead, same remap pattern as
                 // every other case.
                 _rotation = BuildPointingRotation(upwards, north, out effX, out effY, out effZ);
+                loggedTarget = upwards;
                 break;
 
             case AttitudeMode.Hover:
@@ -335,11 +475,17 @@ public class SASManager : MonoBehaviour
                 _rotation = look;
                 _rotation.localRotation = look.localRotation * QuaternionD.Euler(0, 0, effZ) * QuaternionD.Euler(90, 0, 0);
 
-                _LOGGER.LogDebug(
-                    $"[Hover/attitude] horizontalSpeed={horizontalSpeed:F2}m/s horizontal={FormatVector(horizontal)} " +
-                    $"actualVerticalSpeed={actualVerticalSpeed:F2}m/s throttleIntegral={_throttleIntegral:F3} " +
-                    $"tiltFloor={tiltFloor:F2} maxAngleFloor={maxAngleFloor:F2} maxTiltAngleDeg={Math.Acos(Clamp(cosMaxTilt, -1.0, 1.0)) * 180.0 / Math.PI:F1} " +
-                    $"desired={FormatVector(desired)} hoverCosTilt={_hoverCosTilt:F3} refreshInterval={RefreshInterval:F3}s");
+                // Gated behind VerboseLoggingEnabled - ILogger.LogDebug takes a plain object, so an
+                // interpolated string passed directly would be built every tick regardless of whether
+                // Debug-level logging is even on. See enhancement_roadmap.md item 6.
+                if (Settings.VerboseLoggingEnabled.Value)
+                {
+                    _LOGGER.LogDebug(
+                        $"[Hover/attitude] horizontalSpeed={horizontalSpeed:F2}m/s horizontal={FormatVector(horizontal)} " +
+                        $"actualVerticalSpeed={actualVerticalSpeed:F2}m/s throttleIntegral={_throttleIntegral:F3} " +
+                        $"tiltFloor={tiltFloor:F2} maxAngleFloor={maxAngleFloor:F2} maxTiltAngleDeg={Math.Acos(Clamp(cosMaxTilt, -1.0, 1.0)) * 180.0 / Math.PI:F1} " +
+                        $"desired={FormatVector(desired)} hoverCosTilt={_hoverCosTilt:F3} refreshInterval={RefreshInterval:F3}s");
+                }
 
                 break;
             }
@@ -357,7 +503,9 @@ public class SASManager : MonoBehaviour
             case AttitudeMode.Maneuver:
                 if (_telemetry.HasManeuver)
                 {
+                    var maneuver = Vector.Reframed(Vector.normalize(_telemetry.ManeuverDirection), referenceFrame);
                     _rotation = BuildPointingRotation(maneuver, upwards, out effX, out effY, out effZ);
+                    loggedTarget = maneuver;
                 }
                 else
                 {
@@ -381,14 +529,16 @@ public class SASManager : MonoBehaviour
                 break;
         }
 
-        var angleToTarget = GetAngleToRotation();
-        _LOGGER.LogDebug(
-            $"[SetRotation] mode={AttitudeMode} offsets(H={effX:F1}[{XEnabled}],P={effY:F1}[{YEnabled}],R={effZ:F1}[{ZEnabled}]) angleToTarget={angleToTarget:F2}deg | " +
-            $"prograde={FormatVector(orbitPrograde)} retrograde={FormatVector(orbitRetrograde)} " +
-            $"normal={FormatVector(orbitNormal)} antiNormal={FormatVector(orbitAntiNormal)} " +
-            $"radialIn={FormatVector(orbitRadialIn)} radialOut={FormatVector(orbitRadialOut)} " +
-            $"upwards={FormatVector(upwards)} north={FormatVector(north)} " +
-            $"horizontalVelocity={FormatVector(horizontalVelocity)} targetRelativePrograde={FormatVector(targetRelativePrograde)}");
+        // Gated behind VerboseLoggingEnabled (see the [Hover/attitude] comment above) - also skips the
+        // GetAngleToRotation() call itself, not just the string formatting.
+        if (Settings.VerboseLoggingEnabled.Value)
+        {
+            var angleToTarget = GetAngleToRotation();
+            _LOGGER.LogDebug(
+                $"[SetRotation] mode={AttitudeMode} offsets(H={effX:F1}[{XEnabled}],P={effY:F1}[{YEnabled}],R={effZ:F1}[{ZEnabled}]) angleToTarget={angleToTarget:F2}deg " +
+                $"upwards={FormatVector(upwards)} north={FormatVector(north)}" +
+                (loggedTarget.HasValue ? $" target={FormatVector(loggedTarget.Value)}" : ""));
+        }
     }
 
     private static string FormatVector(Vector v) => $"({v.vector.x:F3},{v.vector.y:F3},{v.vector.z:F3})";
@@ -462,25 +612,118 @@ public class SASManager : MonoBehaviour
         return (NormalizeAngle(euler.y), NormalizeAngle(-euler.x), NormalizeAngle(euler.z));
     }
 
+    // Every mode-engage entry point (SetMode itself, and SetSASKillrot/SetHover which touch _vessel
+    // before delegating to SetMode) needs the same "is there actually an active vessel" guard - clicking
+    // a mode button with none active (e.g. between vessel destruction and a new one becoming active)
+    // used to NRE here. See enhancement_roadmap.md item 4.
+    //
+    // Also requires vessel.Autopilot to already exist - it's a separate, independently-populated
+    // VesselAutopilot object that isn't guaranteed to be set the instant a vessel becomes _vessel (the
+    // game's own VesselComponent.AutopilotStatus/SetAutopilotMode/SetAutopilotEnableDisable all null-
+    // check it too). Engaging a mode before it exists would immediately NRE the next Update() tick.
+    private bool TryGetVesselToEngage(string modeDescription, out VesselComponent vessel)
+    {
+        vessel = _vessel;
+        if (vessel != null && vessel.Autopilot != null)
+            return true;
+
+        _LOGGER.LogWarning($"Cannot engage {modeDescription}: no active vessel (or its autopilot isn't ready yet).");
+        vessel = null;
+        return false;
+    }
+
     private void SetMode(AttitudeMode mode)
     {
+        if (!TryGetVesselToEngage(mode.ToString(), out var vessel))
+            return;
+
         _LOGGER.LogInfo($"SAS mode -> {mode} (was {AttitudeMode})");
         AttitudeMode = mode;
-        _vessel.Autopilot.SetActive(true);
+        _engagedVessel = vessel;
+        vessel.Autopilot.SetActive(true);
     }
 
     public void SetSASOff()
     {
         _LOGGER.LogInfo($"SAS mode -> {AttitudeMode.None} (was {AttitudeMode})");
         AttitudeMode = AttitudeMode.None;
-        _vessel.Autopilot.SetActive(false);
+        // _vessel may no longer be the vessel we were actually engaged on (see Update/
+        // DisengageForVesselChange) - deactivate whichever one we last commanded, not whatever's
+        // active now. _engagedVessel and/or its Autopilot may be null (no active vessel at all, or a
+        // vessel switched away from and already torn down) - a single "?." only short-circuits on
+        // _engagedVessel itself being null, NOT on .Autopilot being null, so both are chained.
+        _engagedVessel?.Autopilot?.SetActive(false);
+        _engagedVessel = null;
+        ResetPerVesselState();
+    }
+
+    // Fired from Update() when the active vessel no longer matches the one the current mode was
+    // engaged on (switch/undock/revert/scene-exit all resolve _vessel to something else, including
+    // null) - mirrors SetSASOff's cleanup so no per-vessel control-law state leaks onto the new vessel.
+    private void DisengageForVesselChange(VesselComponent newVessel)
+    {
+        _LOGGER.LogInfo(
+            $"Active vessel changed ({_engagedVessel?.Name ?? "none"} -> {newVessel?.Name ?? "none"}) " +
+            $"while {AttitudeMode} was engaged; disengaging SAS Extended.");
+        Disengage();
+    }
+
+    // Fired from Update() when the maneuver node/target the current mode depends on disappears
+    // (node deleted/executed, target cleared) - same cleanup as DisengageForVesselChange above,
+    // just a different trigger. See enhancement_roadmap.md item 2.
+    private void DisengageForLostReference(string reason)
+    {
+        _LOGGER.LogInfo($"{reason} while {AttitudeMode} was engaged; disengaging SAS Extended.");
+        Disengage();
+    }
+
+    // Fired from Update() when stock SAS (Autopilot.Enabled / Autopilot.AutopilotMode) no longer
+    // matches what we last commanded - see the poll above for why. Deliberately does NOT deactivate
+    // the Autopilot like the other Disengage* helpers do: Enabled/AutopilotMode already reflect
+    // whatever the player/stock UI just set (still Enabled, now pointed at Prograde; or already
+    // deactivated by the game's own T-key handler) - calling SetActive(false) here would immediately
+    // fight the very input that triggered this disengage (e.g. force stock SAS off right after the
+    // player turned on Prograde). We only need to stop OUR tracking and reset our own UI/state.
+    // See enhancement_roadmap.md item 1.
+    private void DisengageForExternalChange()
+    {
+        _LOGGER.LogInfo($"Stock SAS was changed externally while {AttitudeMode} was engaged; disengaging SAS Extended.");
+        Disengage(deactivateAutopilot: false);
+    }
+
+    private void Disengage(bool deactivateAutopilot = true)
+    {
+        AttitudeMode = AttitudeMode.None;
+        // See the matching comment in SetSASOff - chain "?." through .Autopilot too, it can be null.
+        if (deactivateAutopilot)
+            _engagedVessel?.Autopilot?.SetActive(false);
+        _engagedVessel = null;
+        ResetPerVesselState();
+        Disengaged?.Invoke();
+    }
+
+    // Per-vessel control-law state that must never carry over from one vessel to another - KillRot's
+    // held attitude and Hover's throttle PID integrator/filters are only meaningful for the vessel they
+    // were captured on.
+    private void ResetPerVesselState()
+    {
+        _killRotTarget = default;
+        _throttleIntegral = 0;
+        _hoverThrottleIntegralKnown = false;
+        _hoverCosTilt = 1.0;
+        _lastVerticalSpeedForDerivative = 0;
+        _filteredThrustDrivenAccel = 0;
+        HoverThrottle = 0;
     }
 
     public void SetSASKillrot()
     {
+        if (!TryGetVesselToEngage("KillRot", out var vessel))
+            return;
+
         // Capture whatever attitude the vessel is at right now - KillRot holds this, it doesn't
         // steer toward any particular direction (see the comment on AttitudeMode.KillRot).
-        _killRotTarget = _vessel.ControlTransform.Rotation;
+        _killRotTarget = vessel.ControlTransform.Rotation;
         SetMode(AttitudeMode.KillRot);
     }
 
@@ -520,19 +763,22 @@ public class SASManager : MonoBehaviour
     /// </summary>
     public void SetHover()
     {
+        if (!TryGetVesselToEngage("Hover", out var vessel))
+            return;
+
         // Seed the throttle integrator with the current throttle so engaging hover doesn't jolt the
         // engines, and the derivative term with the current vertical speed so its first tick doesn't
         // see a spurious jump from 0.
-        _throttleIntegral = _vessel.flightCtrlState.mainThrottle;
+        _throttleIntegral = vessel.flightCtrlState.mainThrottle;
         _hoverThrottleIntegralKnown = false;
         _hoverCosTilt = 1.0;
-        _lastVerticalSpeedForDerivative = _vessel.VerticalSrfSpeed;
-        _filteredThrustDrivenAccel = _vessel.gravityForPos.magnitude; // matches a coasting vessel's true accel (0 thrust-driven) so the D term doesn't see a spurious jump from 0 on the first tick
-        HoverThrottle = _vessel.flightCtrlState.mainThrottle;
+        _lastVerticalSpeedForDerivative = vessel.VerticalSrfSpeed;
+        _filteredThrustDrivenAccel = vessel.gravityForPos.magnitude; // matches a coasting vessel's true accel (0 thrust-driven) so the D term doesn't see a spurious jump from 0 on the first tick
+        HoverThrottle = vessel.flightCtrlState.mainThrottle;
 
         SetMode(AttitudeMode.Hover);
         _LOGGER.LogInfo(
-            $"Hover engage altitude={_vessel.AltitudeFromSurface:F1}m verticalSpeed={_vessel.VerticalSrfSpeed:F2}m/s throttle={HoverThrottle:F2}");
+            $"Hover engage altitude={vessel.AltitudeFromSurface:F1}m verticalSpeed={vessel.VerticalSrfSpeed:F2}m/s throttle={HoverThrottle:F2}");
     }
 
     /// <summary>
@@ -586,8 +832,10 @@ public class SASManager : MonoBehaviour
 
         // Runs every frame, so log on its own slower timer (independent of the attitude
         // RefreshInterval) to avoid flooding the log while still catching throttle saturation
-        // (pinned at 0 or 1) or a vertical-speed error that never settles.
-        if (_UT - _lastHoverLogTime > 0.25)
+        // (pinned at 0 or 1) or a vertical-speed error that never settles. Also gated behind
+        // VerboseLoggingEnabled (see the [Hover/attitude] comment above) - the 0.25s timer alone
+        // still built this string every quarter-second regardless of whether debug logging was on.
+        if (Settings.VerboseLoggingEnabled.Value && _UT - _lastHoverLogTime > 0.25)
         {
             _lastHoverLogTime = _UT;
             _LOGGER.LogDebug(
@@ -627,6 +875,20 @@ public class SASManager : MonoBehaviour
     // item 3; KillRot/Hover don't point anywhere, so they use their own readouts below instead).
     public double GetAngleToRotation()
     {
+        // Guards the same one-frame window as GetAngularVelocityDegPerSec below: the UI (MainWindowController)
+        // reads this whenever AttitudeMode != None, and Unity doesn't guarantee this MonoBehaviour's own
+        // Update (which disengages AttitudeMode the moment _vessel no longer matches _engagedVessel) runs
+        // before the UI's Update in the same frame.
+        if (_vessel == null)
+            return 0;
+
+        // _rotation is only ever assigned inside SetRotation(), which Update() doesn't call until its
+        // own next tick - engaging a mode sets AttitudeMode immediately, so the UI can read this in the
+        // same frame before _rotation has ever been computed (default(Rotation).coordinateSystem is
+        // null, which Vector.Reframed below would NRE on).
+        if (_rotation.coordinateSystem == null)
+            return 0;
+
         // _rotation.coordinateSystem is always our shared "referenceFrame" (see SetRotation), which is
         // generally NOT the same frame as _vessel.transform.coordinateSystem - comparing their raw
         // vectors directly (as the previous code did) is the same coordinate-mixing bug fixed elsewhere

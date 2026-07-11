@@ -25,11 +25,13 @@ namespace SASExtended.Utilities
         public static ConfigValue<float> StatusRefreshInterval;
         public static ConfigValue<bool> StatusLoggingEnabled;
 
-        // "Attitude offsets" section - one remembered Heading/Pitch/Roll triple per mode that uses the
-        // generic offset mechanism (BuildPointingRotation/BuildTargetOrientationRotation). KillRot/None
-        // don't use offsets at all, and Hover only exposes Roll (see mod_specifics.md), so neither is
-        // in here.
-        public static readonly Dictionary<AttitudeMode, (ConfigValue<float> Heading, ConfigValue<float> Pitch, ConfigValue<float> Roll)> AttitudeOffsets = new();
+        // Remembered Heading/Pitch/Roll triple per mode that uses the generic offset mechanism
+        // (BuildPointingRotation/BuildTargetOrientationRotation), and the remembered Hover vertical
+        // velocity below. Deliberately session-only (SessionValue, not ConfigValue/SWConfiguration) -
+        // these should persist across mode/vessel switches within a play session but must NOT survive
+        // a game restart, unlike the rest of this file. KillRot/None don't use offsets at all, and
+        // Hover only exposes Roll (see mod_specifics.md), so neither is in here.
+        public static readonly Dictionary<AttitudeMode, (SessionValue<float> Heading, SessionValue<float> Pitch, SessionValue<float> Roll)> AttitudeOffsets = new();
 
         private static readonly AttitudeMode[] OffsetModes =
         {
@@ -46,8 +48,19 @@ namespace SASExtended.Utilities
             AttitudeMode.SpecialStarPlus, AttitudeMode.SpecialStarMinus
         };
 
-        // "Hover" section
-        public static ConfigValue<float> HoverVerticalVelocity;
+        // Remembered Hover vertical velocity - session-only, see the comment on AttitudeOffsets above.
+        public static SessionValue<float> HoverVerticalVelocity;
+
+        // Default Heading/Pitch/Roll used to seed SurfaceSurf's offset each session (see the
+        // SurfaceSurf special case in Initialize()). Unlike the offsets themselves, these defaults
+        // are user-configurable and persisted, so a user can change SURF's "zero offset" attitude
+        // without having to re-enter it every session.
+        public static ConfigValue<float> SurfaceSurfDefaultHeading;
+        public static ConfigValue<float> SurfaceSurfDefaultPitch;
+        public static ConfigValue<float> SurfaceSurfDefaultRoll;
+
+        // "Diagnostics" section
+        public static ConfigValue<bool> VerboseLoggingEnabled;
 
         public static void Initialize()
         {
@@ -89,34 +102,55 @@ namespace SASExtended.Utilities
                 "Whether the status readout line is computed/updated at all. Disable to skip this work entirely."
                 ));
 
-            // ATTITUDE OFFSETS
+            // SurfaceSurf needs a 90/90/-90 "level, nose-forward" default instead of the usual 0/0/0 -
+            // BuildPointingRotation's LookRotation(north, upwards) doesn't land on a level attitude at
+            // a zero offset the way every other mode's target vector does. Configurable/persisted so a
+            // user can change SURF's "zero offset" attitude without re-entering it every session.
+            SurfaceSurfDefaultHeading = new(Plugin.SWConfiguration.Bind(
+                "Attitude offsets",
+                "SURF default Heading",
+                90f,
+                "Heading offset SURF resets to at the start of each session."
+                ));
+
+            SurfaceSurfDefaultPitch = new(Plugin.SWConfiguration.Bind(
+                "Attitude offsets",
+                "SURF default Pitch",
+                90f,
+                "Pitch offset SURF resets to at the start of each session."
+                ));
+
+            SurfaceSurfDefaultRoll = new(Plugin.SWConfiguration.Bind(
+                "Attitude offsets",
+                "SURF default Roll",
+                -90f,
+                "Roll offset SURF resets to at the start of each session."
+                ));
+
+            // ATTITUDE OFFSETS (session-only - see the field comment above)
             foreach (var mode in OffsetModes)
             {
-                // SurfaceSurf needs a 90/90/-90 "level, nose-forward" default instead of the usual
-                // 0/0/0 - BuildPointingRotation's LookRotation(north, upwards) doesn't land on a level
-                // attitude at a zero offset the way every other mode's target vector does.
                 var (defaultHeading, defaultPitch, defaultRoll) = mode == AttitudeMode.SurfaceSurf
-                    ? (90f, 90f, -90f)
+                    ? (SurfaceSurfDefaultHeading.Value, SurfaceSurfDefaultPitch.Value, SurfaceSurfDefaultRoll.Value)
                     : (0f, 0f, 0f);
 
                 AttitudeOffsets[mode] = (
-                    new ConfigValue<float>(Plugin.SWConfiguration.Bind(
-                        "Attitude offsets", $"{mode} heading", defaultHeading,
-                        $"Remembered Heading offset for {mode}.")),
-                    new ConfigValue<float>(Plugin.SWConfiguration.Bind(
-                        "Attitude offsets", $"{mode} pitch", defaultPitch,
-                        $"Remembered Pitch offset for {mode}.")),
-                    new ConfigValue<float>(Plugin.SWConfiguration.Bind(
-                        "Attitude offsets", $"{mode} roll", defaultRoll,
-                        $"Remembered Roll offset for {mode}.")));
+                    new SessionValue<float>(defaultHeading),
+                    new SessionValue<float>(defaultPitch),
+                    new SessionValue<float>(defaultRoll));
             }
 
-            // HOVER
-            HoverVerticalVelocity = new(Plugin.SWConfiguration.Bind(
-                "Hover",
-                "Vertical velocity (m/s)",
-                0f,
-                "Remembered target vertical speed for Hover mode."
+            // HOVER (session-only - see the field comment above)
+            HoverVerticalVelocity = new SessionValue<float>(0f);
+
+            // DIAGNOSTICS
+            VerboseLoggingEnabled = new(Plugin.SWConfiguration.Bind(
+                "Diagnostics",
+                "Enable verbose SAS diagnostics logging",
+                false,
+                "Whether SetRotation/Hover build and emit their detailed per-tick debug log lines. " +
+                "Leave off unless troubleshooting - building these strings costs time every tick even " +
+                "when Debug-level logging is filtered out."
                 ));
         }
     }

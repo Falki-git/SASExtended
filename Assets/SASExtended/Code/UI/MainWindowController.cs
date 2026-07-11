@@ -29,6 +29,9 @@ public class MainWindowController : MonoBehaviour
     // The backing field for the IsWindowOpen property
     private bool _isWindowOpen;
 
+    // Guards the one-time SASManager.Disengaged subscription in Update() - see the comment there.
+    private bool _subscribedToSasManager;
+
     private SideToggleControl _offToggle;
     private SideToggleControl _killrotToggle;
     private SideToggleControl _nodeToggle;
@@ -380,7 +383,6 @@ public class MainWindowController : MonoBehaviour
         {
             SASManager.Instance.HoverTargetVerticalSpeed = evt.newValue;
             Settings.HoverVerticalVelocity.Value = evt.newValue;
-            SASExtendedPlugin.Instance.SWConfiguration.Save();
         });
 
         _hoverVerticalVelocityMinus = _hoverControlsContainer.Q<Button>("ver-vel-minus");
@@ -410,6 +412,10 @@ public class MainWindowController : MonoBehaviour
         // Match the containers' initial visibility/colors to the starting (non-hover, no-mode) state.
         UpdatePanelForMode();
         UpdateAttitudeColors();
+        // SASManager.Instance is still null this early (see UpdatePanelForMode's comment) so this
+        // starts NODE/TGT-mode buttons greyed out; the first Update() tick corrects them once real
+        // HasManeuverNode/HasTarget values are available.
+        UpdateNodeTargetAvailability();
 
         // Get the close button from the window. Uses RegisterCallback<ClickEvent> rather than the
         // `.clicked` action, matching every other clickable element in this file (x/y/z-minus/plus/
@@ -434,7 +440,26 @@ public class MainWindowController : MonoBehaviour
     // (not cached) so toggling either in the in-game Settings -> Mods menu takes effect immediately.
     private void Update()
     {
-        if (!IsWindowOpen || !Settings.StatusLoggingEnabled.Value)
+        // Deferred to here (rather than OnEnable) because SASManager.Instance is still null the first
+        // time OnEnable runs - see the comment on UpdatePanelForMode. Runs unconditionally (ahead of
+        // the IsWindowOpen gate below) so the subscription still happens even while the window starts
+        // out closed. Only ever fires once - style.display toggling doesn't re-run OnEnable/Update's
+        // subscription guard.
+        if (!_subscribedToSasManager && SASManager.Instance != null)
+        {
+            SASManager.Instance.Disengaged += OnSasManagerDisengaged;
+            _subscribedToSasManager = true;
+        }
+
+        if (!IsWindowOpen)
+            return;
+
+        // Auto-disengage on node/target loss is handled by SASManager itself (independent of
+        // whether this window is open) - this just greys out the buttons, so it only needs to run
+        // while the window is actually visible.
+        UpdateNodeTargetAvailability();
+
+        if (!Settings.StatusLoggingEnabled.Value)
             return;
 
         if (Time.time - _lastStatusUpdateTime < Settings.StatusRefreshInterval.Value)
@@ -442,6 +467,53 @@ public class MainWindowController : MonoBehaviour
         _lastStatusUpdateTime = Time.time;
 
         UpdateStatusLabel();
+    }
+
+    // NODE has no maneuver node to point at, and the six TGT-tab direction modes have no target,
+    // when HasManeuverNode/HasTarget is false (enhancement_roadmap.md item 2) - grey those buttons
+    // out rather than leaving them clickable with nothing to do. The TGT tab toggle itself is left
+    // alone so the tab stays browsable even with no target selected. Auto-switching back to OFF when
+    // the reference disappears mid-engage is handled in SASManager.Update (DisengageForLostReference).
+    private void UpdateNodeTargetAvailability()
+    {
+        var sas = SASManager.Instance;
+        bool hasManeuver = sas != null && sas.HasManeuverNode;
+        bool hasTarget = sas != null && sas.HasTarget;
+
+        SetToggleAvailability(_nodeToggle, hasManeuver);
+
+        SetToggleAvailability(_targetPlusToggle, hasTarget);
+        SetToggleAvailability(_relativeVelocityPlusToggle, hasTarget);
+        SetToggleAvailability(_parPlusToggle, hasTarget);
+        SetToggleAvailability(_targetMinusToggle, hasTarget);
+        SetToggleAvailability(_relativeVelocityMinusToggle, hasTarget);
+        SetToggleAvailability(_parMinusToggle, hasTarget);
+    }
+
+    // SideToggleControl.SetEnabled() unconditionally forces the toggle off as a side effect of
+    // re-applying its disabled/unchecked visuals - calling it every frame regardless of a real change
+    // would fight the toggle state RegisterModeButton/OnSasManagerDisengaged just set elsewhere. Only
+    // call it on an actual availability change.
+    private static void SetToggleAvailability(SideToggleControl toggle, bool available)
+    {
+        if (toggle.IsEnabled != available)
+            toggle.SetEnabled(available);
+    }
+
+    // SASManager disengaged itself (vessel switch/undock/revert/scene-exit - see
+    // SASManager.DisengageForVesselChange) rather than the player clicking a toggle - mirror what a
+    // manual OFF click does (RegisterModeButton's else branch) so the window doesn't keep showing a
+    // mode/offsets that are no longer actually engaged. Unlike that manual path, we don't know which
+    // toggle was previously active, so ClearAllModeToggles runs unconditionally rather than relying on
+    // every other toggle already being off.
+    private void OnSasManagerDisengaged()
+    {
+        ClearAllModeToggles(_offToggle);
+        _offToggle.SwitchToggleState(true, false);
+        _xValue.value = 0;
+        _yValue.value = 0;
+        _zValue.value = 0;
+        UpdateAttitudeColors();
     }
 
     // Status content depends on the active mode (enhancement_roadmap.md item 3): KillRot and Hover
@@ -507,6 +579,15 @@ public class MainWindowController : MonoBehaviour
     {
         toggle.RegisterCallback<ClickEvent>(evt =>
         {
+            // SideToggleControl's own ClickEvent handler already no-ops on a disabled toggle, but it
+            // doesn't stop the event from propagating - without this guard a click on e.g. a greyed-out
+            // NODE/TGT button (see UpdateNodeTargetAvailability) falls through to the "was off, engage
+            // it" vs. "was on, turn off" branching below. A disabled toggle is always untoggled, so it
+            // took the turn-off branch: SetSASOff() actually disengaged, while the real active toggle
+            // was never cleared, leaving it visually checked with SAS Extended silently off.
+            if (!toggle.IsEnabled)
+                return;
+
             if (toggle.IsToggled)
             {
                 ClearAllModeToggles(toggle);
@@ -698,30 +779,21 @@ public class MainWindowController : MonoBehaviour
     {
         SASManager.Instance.X = evt.newValue;
         if (Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))
-        {
             offsets.Heading.Value = evt.newValue;
-            SASExtendedPlugin.Instance.SWConfiguration.Save();
-        }
     }
 
     private void OnYChanged(ChangeEvent<float> evt)
     {
         SASManager.Instance.Y = evt.newValue;
         if (Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))
-        {
             offsets.Pitch.Value = evt.newValue;
-            SASExtendedPlugin.Instance.SWConfiguration.Save();
-        }
     }
 
     private void OnZChanged(ChangeEvent<float> evt)
     {
         SASManager.Instance.Z = evt.newValue;
         if (Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))
-        {
             offsets.Roll.Value = evt.newValue;
-            SASExtendedPlugin.Instance.SWConfiguration.Save();
-        }
     }
 }
 }
