@@ -73,6 +73,7 @@ public class MainWindowController : MonoBehaviour
     private SideToggleControl _starPlusToggle;
     private SideToggleControl _starMinusToggle;
 
+    private SideToggleControl _holdToggle;
     private SideToggleControl _hoverToggle;
 
     private SideToggleControl _hoverVerticalVelocityToggle;
@@ -239,6 +240,7 @@ public class MainWindowController : MonoBehaviour
         _starPlusToggle = _root.Q<SideToggleControl>("starplus");
         _starMinusToggle = _root.Q<SideToggleControl>("starminus");
 
+        _holdToggle = _root.Q<SideToggleControl>("hold");
         _hoverToggle = _root.Q<SideToggleControl>("hover");
 
         // Every mode toggle is mutually exclusive with every other one, across all tabs - build the
@@ -251,7 +253,7 @@ public class MainWindowController : MonoBehaviour
             _svelPlusToggle, _svelMinusToggle, _surfToggle, _hvelPlusToggle, _hvelMinusToggle, _upToggle,
             _targetPlusToggle, _relativeVelocityPlusToggle, _parPlusToggle, _targetMinusToggle, _relativeVelocityMinusToggle, _parMinusToggle,
             _starPlusToggle, _starMinusToggle,
-            _hoverToggle
+            _holdToggle, _hoverToggle
         };
 
         RegisterModeButton(_offToggle, () => SASManager.Instance.SetSASOff());
@@ -286,6 +288,7 @@ public class MainWindowController : MonoBehaviour
         RegisterModeButton(_starPlusToggle, () => SASManager.Instance.SetSpecialStarPlus());
         RegisterModeButton(_starMinusToggle, () => SASManager.Instance.SetSpecialStarMinus());
 
+        RegisterModeButton(_holdToggle, () => SASManager.Instance.SetHold());
         RegisterModeButton(_hoverToggle, () => SASManager.Instance.SetHover());
 
         _xToggle = _root.Q<SideToggleControl>("x-toggle");
@@ -465,7 +468,7 @@ public class MainWindowController : MonoBehaviour
     }
 
     // NODE has no maneuver node to point at, and the six TGT-tab direction modes have no target,
-    // when HasManeuverNode/HasTarget is false (enhancement_roadmap.md item 2) - grey those buttons
+    // when HasManeuverNode/HasTarget is false - grey those buttons
     // out rather than leaving them clickable with nothing to do. The TGT tab toggle itself is left
     // alone so the tab stays browsable even with no target selected. Auto-switching back to OFF when
     // the reference disappears mid-engage is handled in SASManager.Update (DisengageForLostReference).
@@ -511,7 +514,7 @@ public class MainWindowController : MonoBehaviour
         UpdateAttitudeColors();
     }
 
-    // Status content depends on the active mode (enhancement_roadmap.md item 3): KillRot and Hover
+    // Status content depends on the active mode: KillRot and Hover
     // don't point anywhere, so an angle-to-target isn't meaningful for either and they get their own
     // bespoke readouts; every other mode (including Node/TGT PAR, even while their fallback holds
     // current attitude - see SASManager.SetRotation) shares the generic angle-to-target + free-axis

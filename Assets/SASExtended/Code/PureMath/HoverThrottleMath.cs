@@ -29,8 +29,8 @@ namespace SASExtended.PureMath
     // Pure vertical-speed throttle controller (holds a target vertical speed, not altitude - see
     // SASManager's Hover field-block comment). Extracted out of SASManager.UpdateHoverThrottle so the
     // control law can be validated with edit-mode tests instead of only via in-game rounds - see
-    // enhancement_roadmap.md item 2 and hover_mode_fixes.md for the debugging cost that motivated
-    // this split (the offset math above and this law took 11 in-game rounds to get right).
+    // hover_mode_fixes.md for the debugging cost that motivated this split (the offset math above
+    // and this law took 11 in-game rounds to get right).
     public static class HoverThrottleMath
     {
         public static HoverThrottleStepResult Step(

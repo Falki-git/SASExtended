@@ -27,10 +27,9 @@ public class SASManager : MonoBehaviour
     public AttitudeMode AttitudeMode = AttitudeMode.None;
     public bool IsHoverActive => AttitudeMode == AttitudeMode.Hover;
 
-    // Read by MainWindowController to grey out the NODE button / TGT-tab mode buttons
-    // (enhancement_roadmap.md item 2) and by Update() below to auto-disengage if the node/target
-    // disappears while its mode is active. _vessel is guarded first since _telemetry (a property,
-    // not a field) NREs on a null _vessel.
+    // Read by MainWindowController to grey out the NODE button / TGT-tab mode buttons and by
+    // Update() below to auto-disengage if the node/target disappears while its mode is active.
+    // _vessel is guarded first since _telemetry (a property, not a field) NREs on a null _vessel.
     public bool HasManeuverNode => _vessel != null && _telemetry.HasManeuver;
     public bool HasTarget => _vessel != null && _telemetry.HasTargetObject;
 
@@ -113,11 +112,18 @@ public class SASManager : MonoBehaviour
     // then just held, mirroring the game's own vanilla StabilityAssist ("SAS off, kill rotation, hold
     // whatever attitude you're currently at" - not pointed at any particular direction like north).
     private Rotation _killRotTarget;
+    // Attitude held for AttitudeMode.Hold - captured once at engage time (see SetHold), reframed into
+    // the universe's actual non-rotating inertial frame (NOT vessel.ControlTransform.Rotation's own
+    // coordinateSystem, which is body/celestial-frame-relative and would silently rotate with the
+    // reference body over time - see the SetHold comment). Pre-multiplied by Euler(-90,0,0) so it can
+    // be fed straight into ApplyOffsets/AttitudeMath.ComposePointingRotation like every other mode's
+    // LookRotation-built "look" value.
+    private Rotation _holdTarget;
     // The vessel that was active when the current AttitudeMode was engaged. _vessel (above) is a live
     // property that silently resolves to whatever vessel is active *now* - compared against this every
     // Update tick so a switch/undock/revert/scene-exit disengages instead of applying this vessel's
     // captured per-vessel state (_killRotTarget, the Hover throttle integrator/filters) to a different
-    // vessel. See enhancement_roadmap.md item 4.
+    // vessel.
     private VesselComponent _engagedVessel;
 
     private void Start()
@@ -139,7 +145,7 @@ public class SASManager : MonoBehaviour
         // engaged on, the active vessel was switched/undocked/reverted out from under us, or flight
         // was exited entirely (_vessel goes null). Disengage rather than silently applying this
         // vessel's captured state (KillRot's held attitude, Hover's throttle integrator) to whatever
-        // vessel is active now. See enhancement_roadmap.md item 4.
+        // vessel is active now.
         var vessel = _vessel;
         if (vessel == null || vessel != _engagedVessel)
         {
@@ -159,7 +165,6 @@ public class SASManager : MonoBehaviour
         // (see the fallback branches in SetRotation/BuildTargetOrientationRotation) - the button
         // stayed lit as if still tracking with no way to tell. Auto-disengage to OFF instead, same
         // as a vessel switch, so the UI honestly reflects that the mode stopped doing anything.
-        // See enhancement_roadmap.md item 2.
         if (AttitudeMode == AttitudeMode.Maneuver && !_telemetry.HasManeuver)
         {
             DisengageForLostReference("Maneuver node was removed");
@@ -172,7 +177,7 @@ public class SASManager : MonoBehaviour
             return;
         }
 
-        // Two-way sync with stock SAS (enhancement_roadmap.md item 1): we only ever drive the
+        // Two-way sync with stock SAS: we only ever drive the
         // vessel through Autopilot.SetActive(true) (-> Activate(StabilityAssist)) followed by
         // SAS.LockRotation, so Enabled and AutopilotMode should always read back exactly
         // (true, StabilityAssist) while one of our modes is engaged. If either has drifted, something
@@ -232,8 +237,8 @@ public class SASManager : MonoBehaviour
         //
         // Only "north" and "upwards" are hoisted here - every mode-specific direction vector below is
         // computed lazily inside its own switch case instead (AttitudeMode is single-valued, so only
-        // one case's vector(s) are ever needed per tick; see enhancement_roadmap.md item 5). This cuts
-        // per-tick Vector.Reframed calls from ~18 down to 1 (2 for negated +/- pairs).
+        // one case's vector(s) are ever needed per tick). This cuts per-tick Vector.Reframed calls
+        // from ~18 down to 1 (2 for negated +/- pairs).
         var north = _telemetry.HorizonNorth;
         var referenceFrame = north.coordinateSystem;
         var upwards = Vector.Reframed(Vector.normalize(Position.Delta(_telemetry.RootPosition, _telemetry.SOIPosition)), referenceFrame);
@@ -473,7 +478,7 @@ public class SASManager : MonoBehaviour
 
                 // Gated behind VerboseLoggingEnabled - ILogger.LogDebug takes a plain object, so an
                 // interpolated string passed directly would be built every tick regardless of whether
-                // Debug-level logging is even on. See enhancement_roadmap.md item 6.
+                // Debug-level logging is even on.
                 if (Settings.VerboseLoggingEnabled.Value)
                 {
                     _LOGGER.LogDebug(
@@ -494,6 +499,15 @@ public class SASManager : MonoBehaviour
                 effX = 0;
                 effY = 0;
                 effZ = 0;
+                break;
+
+            case AttitudeMode.Hold:
+                // Unlike every mode above, the "look" here isn't recomputed from live telemetry each
+                // tick - _holdTarget is a fixed snapshot captured once at engage time (see SetHold), so
+                // the vessel holds the same direction in inertial space through orbital motion, SOI
+                // changes, and time warp. H/P/R trim still applies on top via the normal ApplyOffsets
+                // path (unlike KillRot, which has no trim panel at all).
+                _rotation = ApplyOffsets(_holdTarget, out effX, out effY, out effZ);
                 break;
 
             case AttitudeMode.Maneuver:
@@ -536,11 +550,16 @@ public class SASManager : MonoBehaviour
 
     // Builds the commanded attitude for a "point the nose at `target`" mode: LookRotation aligns local
     // up (the nose - see the trailing Euler(90,0,0)) with `target` exactly, then the H/P/R offsets are
-    // applied on top. A disabled H/P/R control isn't just forced to 0 - see GetCurrentOffsetAngles.
+    // applied on top via ApplyOffsets. A disabled H/P/R control isn't just forced to 0 - see
+    // GetCurrentOffsetAngles.
     private Rotation BuildPointingRotation(Vector target, Vector upHint, out double appliedX, out double appliedY, out double appliedZ)
-    {
-        var look = Rotation.LookRotation(target, upHint);
+        => ApplyOffsets(Rotation.LookRotation(target, upHint), out appliedX, out appliedY, out appliedZ);
 
+    // Shared H/P/R offset application, factored out of BuildPointingRotation so AttitudeMode.Hold (whose
+    // "look" is a captured attitude snapshot, not something built fresh from a target/upHint pair every
+    // tick) can reuse the exact same fixed-value-vs-free-track behavior as every other pointing mode.
+    private Rotation ApplyOffsets(Rotation look, out double appliedX, out double appliedY, out double appliedZ)
+    {
         appliedX = XEnabled ? X : 0;
         appliedY = YEnabled ? Y : 0;
         appliedZ = ZEnabled ? Z : 0;
@@ -604,7 +623,7 @@ public class SASManager : MonoBehaviour
     // Every mode-engage entry point (SetMode itself, and SetSASKillrot/SetHover which touch _vessel
     // before delegating to SetMode) needs the same "is there actually an active vessel" guard - clicking
     // a mode button with none active (e.g. between vessel destruction and a new one becoming active)
-    // used to NRE here. See enhancement_roadmap.md item 4.
+    // used to NRE here.
     //
     // Also requires vessel.Autopilot to already exist - it's a separate, independently-populated
     // VesselAutopilot object that isn't guaranteed to be set the instant a vessel becomes _vessel (the
@@ -659,7 +678,7 @@ public class SASManager : MonoBehaviour
 
     // Fired from Update() when the maneuver node/target the current mode depends on disappears
     // (node deleted/executed, target cleared) - same cleanup as DisengageForVesselChange above,
-    // just a different trigger. See enhancement_roadmap.md item 2.
+    // just a different trigger.
     private void DisengageForLostReference(string reason)
     {
         _LOGGER.LogInfo($"{reason} while {AttitudeMode} was engaged; disengaging SAS Extended.");
@@ -673,7 +692,6 @@ public class SASManager : MonoBehaviour
     // deactivated by the game's own T-key handler) - calling SetActive(false) here would immediately
     // fight the very input that triggered this disengage (e.g. force stock SAS off right after the
     // player turned on Prograde). We only need to stop OUR tracking and reset our own UI/state.
-    // See enhancement_roadmap.md item 1.
     private void DisengageForExternalChange()
     {
         _LOGGER.LogInfo($"Stock SAS was changed externally while {AttitudeMode} was engaged; disengaging SAS Extended.");
@@ -697,6 +715,7 @@ public class SASManager : MonoBehaviour
     private void ResetPerVesselState()
     {
         _killRotTarget = default;
+        _holdTarget = default;
         _throttleIntegral = 0;
         _hoverThrottleIntegralKnown = false;
         _hoverCosTilt = 1.0;
@@ -714,6 +733,36 @@ public class SASManager : MonoBehaviour
         // steer toward any particular direction (see the comment on AttitudeMode.KillRot).
         _killRotTarget = vessel.ControlTransform.Rotation;
         SetMode(AttitudeMode.KillRot);
+    }
+
+    /// <summary>
+    /// Engages Hold: snapshots the vessel's current facing and locks to it, fixed in inertial space,
+    /// through orbital motion, SOI changes, and time warp - unlike every direction-vector mode above
+    /// (which tracks a frame that itself moves) and unlike KillRot (which - via
+    /// vessel.ControlTransform.Rotation's own body/celestial-relative coordinateSystem - holds an
+    /// attitude that would drift as the reference body rotates/orbits). The snapshot is reframed into
+    /// the game's actual universe inertial frame (GameManager...UniverseModel.inertialReferenceFrame.
+    /// inertialReferenceFrame - confirmed via decompile to be the frame VesselComponent's own
+    /// ParentToInertialReferenceFrame()/IsChildOfInertialReferenceFrame() use) before being held, so it
+    /// stays fixed in space rather than silently co-rotating with whatever frame ControlTransform
+    /// happens to be parented to right now.
+    /// </summary>
+    public void SetHold()
+    {
+        if (!TryGetVesselToEngage("Hold", out var vessel))
+            return;
+
+        var universeFrame = GameManager.Instance.Game.UniverseModel.inertialReferenceFrame.inertialReferenceFrame;
+        var snapshot = Rotation.Reframed(vessel.ControlTransform.Rotation, universeFrame);
+        // Pre-multiply by Euler(-90,0,0) so ApplyOffsets/AttitudeMath.ComposePointingRotation's trailing
+        // Euler(90,0,0) (baked in to remap LookRotation's Z-forward convention onto the nose/up axis -
+        // see BuildPointingRotation) cancels back out to exactly the captured attitude when all three
+        // offsets are 0: two rotations about the same (X) axis commute and simply cancel.
+        snapshot.localRotation *= QuaternionD.Euler(-90, 0, 0);
+        _holdTarget = snapshot;
+
+        SetMode(AttitudeMode.Hold);
+        _LOGGER.LogInfo("Hold engaged, snapshot captured in universe inertial frame.");
     }
 
     public void SetSASManeuver() => SetMode(AttitudeMode.Maneuver);
@@ -848,8 +897,8 @@ public class SASManager : MonoBehaviour
     }
 
     // Public: also read by MainWindowController for the status readout's generic angle-to-target line
-    // (every pointing mode - ORB/SURF/TGT/SPEC/Node/TGT PAR - shares this, per enhancement_roadmap.md
-    // item 3; KillRot/Hover don't point anywhere, so they use their own readouts below instead).
+    // (every pointing mode - ORB/SURF/TGT/SPEC/Node/TGT PAR - shares this; KillRot/Hover don't point
+    // anywhere, so they use their own readouts below instead).
     public double GetAngleToRotation()
     {
         // Guards the same one-frame window as GetAngularVelocityDegPerSec below: the UI (MainWindowController)

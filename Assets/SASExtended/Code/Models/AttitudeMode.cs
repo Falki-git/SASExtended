@@ -30,6 +30,7 @@ namespace SASExtended.Models
         SpecialStarPlus,
         SpecialStarMinus,
 
+        Hold,
         Hover
     }
 }
