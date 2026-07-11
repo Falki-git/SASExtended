@@ -15,15 +15,7 @@ doesn't reflect externally-changed state. Subscribe to `SASEnabledMessage` /
 `SASDisabledMessage` / `SASModeChangedMessage` (already catalogued in `mod_specifics.md`) to
 disengage or update the UI. Removes a whole class of confusing in-flight behavior.
 
-### 2. Honest UI feedback for fallback states
-
-`Maneuver` with no node and `TargetPar`/`Target` modes with no target silently hold current
-attitude (fallback branches in `SASManager.SetRotation` / `BuildTargetOrientationRotation`)
-while the button stays lit as if tracking — the player can't tell "pointing at node" from
-"there was no node." Grey out / badge the buttons using `HasManeuver` / `HasTargetObject`, or
-show a status line. Cheap, big usability win.
-
-### 3. MechJeb-parity "ADV" tab
+### 2. MechJeb-parity "ADV" tab
 
 Smart A.S.S. is the stated north star; its OBT/SURF/TGT rows are done, leaving ADV —
 arbitrary reference-frame + direction combinations (see `MechJebModuleSmartASS.cs` in the
@@ -34,7 +26,7 @@ SURF/TGT/SPEC.
 ## Refactors — optimize and stabilize
 
 
-### 4. Extract the pure math into a testable layer + delete dead code
+### 3. Extract the pure math into a testable layer + delete dead code
 
 The offset math was validated via a standalone quaternion simulation and the hover law took
 11 in-game rounds — both because nothing is testable outside the Unity editor. Pull
