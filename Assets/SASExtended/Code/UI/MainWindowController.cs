@@ -383,7 +383,6 @@ public class MainWindowController : MonoBehaviour
         {
             SASManager.Instance.HoverTargetVerticalSpeed = evt.newValue;
             Settings.HoverVerticalVelocity.Value = evt.newValue;
-            SASExtendedPlugin.Instance.SWConfiguration.Save();
         });
 
         _hoverVerticalVelocityMinus = _hoverControlsContainer.Q<Button>("ver-vel-minus");
@@ -728,30 +727,21 @@ public class MainWindowController : MonoBehaviour
     {
         SASManager.Instance.X = evt.newValue;
         if (Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))
-        {
             offsets.Heading.Value = evt.newValue;
-            SASExtendedPlugin.Instance.SWConfiguration.Save();
-        }
     }
 
     private void OnYChanged(ChangeEvent<float> evt)
     {
         SASManager.Instance.Y = evt.newValue;
         if (Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))
-        {
             offsets.Pitch.Value = evt.newValue;
-            SASExtendedPlugin.Instance.SWConfiguration.Save();
-        }
     }
 
     private void OnZChanged(ChangeEvent<float> evt)
     {
         SASManager.Instance.Z = evt.newValue;
         if (Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))
-        {
             offsets.Roll.Value = evt.newValue;
-            SASExtendedPlugin.Instance.SWConfiguration.Save();
-        }
     }
 }
 }

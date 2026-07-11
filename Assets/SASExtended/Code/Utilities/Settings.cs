@@ -25,11 +25,13 @@ namespace SASExtended.Utilities
         public static ConfigValue<float> StatusRefreshInterval;
         public static ConfigValue<bool> StatusLoggingEnabled;
 
-        // "Attitude offsets" section - one remembered Heading/Pitch/Roll triple per mode that uses the
-        // generic offset mechanism (BuildPointingRotation/BuildTargetOrientationRotation). KillRot/None
-        // don't use offsets at all, and Hover only exposes Roll (see mod_specifics.md), so neither is
-        // in here.
-        public static readonly Dictionary<AttitudeMode, (ConfigValue<float> Heading, ConfigValue<float> Pitch, ConfigValue<float> Roll)> AttitudeOffsets = new();
+        // Remembered Heading/Pitch/Roll triple per mode that uses the generic offset mechanism
+        // (BuildPointingRotation/BuildTargetOrientationRotation), and the remembered Hover vertical
+        // velocity below. Deliberately session-only (SessionValue, not ConfigValue/SWConfiguration) -
+        // these should persist across mode/vessel switches within a play session but must NOT survive
+        // a game restart, unlike the rest of this file. KillRot/None don't use offsets at all, and
+        // Hover only exposes Roll (see mod_specifics.md), so neither is in here.
+        public static readonly Dictionary<AttitudeMode, (SessionValue<float> Heading, SessionValue<float> Pitch, SessionValue<float> Roll)> AttitudeOffsets = new();
 
         private static readonly AttitudeMode[] OffsetModes =
         {
@@ -46,8 +48,8 @@ namespace SASExtended.Utilities
             AttitudeMode.SpecialStarPlus, AttitudeMode.SpecialStarMinus
         };
 
-        // "Hover" section
-        public static ConfigValue<float> HoverVerticalVelocity;
+        // Remembered Hover vertical velocity - session-only, see the comment on AttitudeOffsets above.
+        public static SessionValue<float> HoverVerticalVelocity;
 
         // "Diagnostics" section
         public static ConfigValue<bool> VerboseLoggingEnabled;
@@ -92,7 +94,7 @@ namespace SASExtended.Utilities
                 "Whether the status readout line is computed/updated at all. Disable to skip this work entirely."
                 ));
 
-            // ATTITUDE OFFSETS
+            // ATTITUDE OFFSETS (session-only - see the field comment above)
             foreach (var mode in OffsetModes)
             {
                 // SurfaceSurf needs a 90/90/-90 "level, nose-forward" default instead of the usual
@@ -103,24 +105,13 @@ namespace SASExtended.Utilities
                     : (0f, 0f, 0f);
 
                 AttitudeOffsets[mode] = (
-                    new ConfigValue<float>(Plugin.SWConfiguration.Bind(
-                        "Attitude offsets", $"{mode} heading", defaultHeading,
-                        $"Remembered Heading offset for {mode}.")),
-                    new ConfigValue<float>(Plugin.SWConfiguration.Bind(
-                        "Attitude offsets", $"{mode} pitch", defaultPitch,
-                        $"Remembered Pitch offset for {mode}.")),
-                    new ConfigValue<float>(Plugin.SWConfiguration.Bind(
-                        "Attitude offsets", $"{mode} roll", defaultRoll,
-                        $"Remembered Roll offset for {mode}.")));
+                    new SessionValue<float>(defaultHeading),
+                    new SessionValue<float>(defaultPitch),
+                    new SessionValue<float>(defaultRoll));
             }
 
-            // HOVER
-            HoverVerticalVelocity = new(Plugin.SWConfiguration.Bind(
-                "Hover",
-                "Vertical velocity (m/s)",
-                0f,
-                "Remembered target vertical speed for Hover mode."
-                ));
+            // HOVER (session-only - see the field comment above)
+            HoverVerticalVelocity = new SessionValue<float>(0f);
 
             // DIAGNOSTICS
             VerboseLoggingEnabled = new(Plugin.SWConfiguration.Bind(
