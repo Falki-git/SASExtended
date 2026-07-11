@@ -412,6 +412,10 @@ public class MainWindowController : MonoBehaviour
         // Match the containers' initial visibility/colors to the starting (non-hover, no-mode) state.
         UpdatePanelForMode();
         UpdateAttitudeColors();
+        // SASManager.Instance is still null this early (see UpdatePanelForMode's comment) so this
+        // starts NODE/TGT-mode buttons greyed out; the first Update() tick corrects them once real
+        // HasManeuverNode/HasTarget values are available.
+        UpdateNodeTargetAvailability();
 
         // Get the close button from the window. Uses RegisterCallback<ClickEvent> rather than the
         // `.clicked` action, matching every other clickable element in this file (x/y/z-minus/plus/
@@ -447,7 +451,15 @@ public class MainWindowController : MonoBehaviour
             _subscribedToSasManager = true;
         }
 
-        if (!IsWindowOpen || !Settings.StatusLoggingEnabled.Value)
+        if (!IsWindowOpen)
+            return;
+
+        // Auto-disengage on node/target loss is handled by SASManager itself (independent of
+        // whether this window is open) - this just greys out the buttons, so it only needs to run
+        // while the window is actually visible.
+        UpdateNodeTargetAvailability();
+
+        if (!Settings.StatusLoggingEnabled.Value)
             return;
 
         if (Time.time - _lastStatusUpdateTime < Settings.StatusRefreshInterval.Value)
@@ -455,6 +467,37 @@ public class MainWindowController : MonoBehaviour
         _lastStatusUpdateTime = Time.time;
 
         UpdateStatusLabel();
+    }
+
+    // NODE has no maneuver node to point at, and the six TGT-tab direction modes have no target,
+    // when HasManeuverNode/HasTarget is false (enhancement_roadmap.md item 2) - grey those buttons
+    // out rather than leaving them clickable with nothing to do. The TGT tab toggle itself is left
+    // alone so the tab stays browsable even with no target selected. Auto-switching back to OFF when
+    // the reference disappears mid-engage is handled in SASManager.Update (DisengageForLostReference).
+    private void UpdateNodeTargetAvailability()
+    {
+        var sas = SASManager.Instance;
+        bool hasManeuver = sas != null && sas.HasManeuverNode;
+        bool hasTarget = sas != null && sas.HasTarget;
+
+        SetToggleAvailability(_nodeToggle, hasManeuver);
+
+        SetToggleAvailability(_targetPlusToggle, hasTarget);
+        SetToggleAvailability(_relativeVelocityPlusToggle, hasTarget);
+        SetToggleAvailability(_parPlusToggle, hasTarget);
+        SetToggleAvailability(_targetMinusToggle, hasTarget);
+        SetToggleAvailability(_relativeVelocityMinusToggle, hasTarget);
+        SetToggleAvailability(_parMinusToggle, hasTarget);
+    }
+
+    // SideToggleControl.SetEnabled() unconditionally forces the toggle off as a side effect of
+    // re-applying its disabled/unchecked visuals - calling it every frame regardless of a real change
+    // would fight the toggle state RegisterModeButton/OnSasManagerDisengaged just set elsewhere. Only
+    // call it on an actual availability change.
+    private static void SetToggleAvailability(SideToggleControl toggle, bool available)
+    {
+        if (toggle.IsEnabled != available)
+            toggle.SetEnabled(available);
     }
 
     // SASManager disengaged itself (vessel switch/undock/revert/scene-exit - see

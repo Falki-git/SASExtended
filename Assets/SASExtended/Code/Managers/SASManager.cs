@@ -27,6 +27,18 @@ public class SASManager : MonoBehaviour
     public AttitudeMode AttitudeMode = AttitudeMode.None;
     public bool IsHoverActive => AttitudeMode == AttitudeMode.Hover;
 
+    // Read by MainWindowController to grey out the NODE button / TGT-tab mode buttons
+    // (enhancement_roadmap.md item 2) and by Update() below to auto-disengage if the node/target
+    // disappears while its mode is active. _vessel is guarded first since _telemetry (a property,
+    // not a field) NREs on a null _vessel.
+    public bool HasManeuverNode => _vessel != null && _telemetry.HasManeuver;
+    public bool HasTarget => _vessel != null && _telemetry.HasTargetObject;
+
+    private static bool IsTargetMode(AttitudeMode mode) =>
+        mode is AttitudeMode.TargetPlus or AttitudeMode.TargetMinus or
+                AttitudeMode.TargetRvelPlus or AttitudeMode.TargetRvelMinus or
+                AttitudeMode.TargetParPlus or AttitudeMode.TargetParMinus;
+
     public double RefreshInterval = 0;
     public double RefreshInterval_short = 0.02;
     public double RefreshInterval_mid = 0.05;
@@ -142,6 +154,23 @@ public class SASManager : MonoBehaviour
         // untouched so the very next tick retries immediately once Autopilot is ready.
         if (vessel.Autopilot == null)
             return;
+
+        // Maneuver/Target modes silently held current attitude when their reference disappeared
+        // (see the fallback branches in SetRotation/BuildTargetOrientationRotation) - the button
+        // stayed lit as if still tracking with no way to tell. Auto-disengage to OFF instead, same
+        // as a vessel switch, so the UI honestly reflects that the mode stopped doing anything.
+        // See enhancement_roadmap.md item 2.
+        if (AttitudeMode == AttitudeMode.Maneuver && !_telemetry.HasManeuver)
+        {
+            DisengageForLostReference("Maneuver node was removed");
+            return;
+        }
+
+        if (IsTargetMode(AttitudeMode) && !_telemetry.HasTargetObject)
+        {
+            DisengageForLostReference("Target was lost");
+            return;
+        }
 
         if (_UT - _lastRefreshTime > RefreshInterval /*DebugUI.Instance.RefreshInterval*/)
         {
@@ -612,6 +641,20 @@ public class SASManager : MonoBehaviour
         _LOGGER.LogInfo(
             $"Active vessel changed ({_engagedVessel?.Name ?? "none"} -> {newVessel?.Name ?? "none"}) " +
             $"while {AttitudeMode} was engaged; disengaging SAS Extended.");
+        Disengage();
+    }
+
+    // Fired from Update() when the maneuver node/target the current mode depends on disappears
+    // (node deleted/executed, target cleared) - same cleanup as DisengageForVesselChange above,
+    // just a different trigger. See enhancement_roadmap.md item 2.
+    private void DisengageForLostReference(string reason)
+    {
+        _LOGGER.LogInfo($"{reason} while {AttitudeMode} was engaged; disengaging SAS Extended.");
+        Disengage();
+    }
+
+    private void Disengage()
+    {
         AttitudeMode = AttitudeMode.None;
         // See the matching comment in SetSASOff - chain "?." through .Autopilot too, it can be null.
         _engagedVessel?.Autopilot?.SetActive(false);
