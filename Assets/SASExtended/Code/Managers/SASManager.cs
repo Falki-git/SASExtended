@@ -3,6 +3,7 @@ using KSP.Game;
 using KSP.Sim;
 using KSP.Sim.impl;
 using SASExtended.Models;
+using SASExtended.Utilities;
 using UnityEngine;
 
 namespace SASExtended.Managers
@@ -98,6 +99,11 @@ public class SASManager : MonoBehaviour
     private void Start()
     {
         Instance = this;
+
+        // Seed from the remembered value once at startup only - SetHover() deliberately never resets
+        // this on re-engage (see the field comment above), so it must not be reloaded from config here
+        // on every engage, just the one time the vessel/session starts.
+        HoverTargetVerticalSpeed = Settings.HoverVerticalVelocity.Value;
     }
 
     private void Update()

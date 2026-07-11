@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using ReduxLib.Configuration;
+using SASExtended.Models;
 
 namespace SASExtended.Utilities
 {
@@ -22,6 +24,30 @@ namespace SASExtended.Utilities
         // "UI" section
         public static ConfigValue<float> StatusRefreshInterval;
         public static ConfigValue<bool> StatusLoggingEnabled;
+
+        // "Attitude offsets" section - one remembered Heading/Pitch/Roll triple per mode that uses the
+        // generic offset mechanism (BuildPointingRotation/BuildTargetOrientationRotation). KillRot/None
+        // don't use offsets at all, and Hover only exposes Roll (see mod_specifics.md), so neither is
+        // in here.
+        public static readonly Dictionary<AttitudeMode, (ConfigValue<float> Heading, ConfigValue<float> Pitch, ConfigValue<float> Roll)> AttitudeOffsets = new();
+
+        private static readonly AttitudeMode[] OffsetModes =
+        {
+            AttitudeMode.Maneuver,
+            AttitudeMode.OrbitPrograde, AttitudeMode.OrbitRetrograde,
+            AttitudeMode.OrbitNormal, AttitudeMode.OrbitAntiNormal,
+            AttitudeMode.OrbitRadialIn, AttitudeMode.OrbitRadialOut,
+            AttitudeMode.SurfaceSvelPlus, AttitudeMode.SurfaceSvelMinus,
+            AttitudeMode.SurfaceHvelPlus, AttitudeMode.SurfaceHvelMinus,
+            AttitudeMode.SurfaceSurf, AttitudeMode.SurfaceUp,
+            AttitudeMode.TargetPlus, AttitudeMode.TargetMinus,
+            AttitudeMode.TargetRvelPlus, AttitudeMode.TargetRvelMinus,
+            AttitudeMode.TargetParPlus, AttitudeMode.TargetParMinus,
+            AttitudeMode.SpecialStarPlus, AttitudeMode.SpecialStarMinus
+        };
+
+        // "Hover" section
+        public static ConfigValue<float> HoverVerticalVelocity;
 
         public static void Initialize()
         {
@@ -61,6 +87,36 @@ namespace SASExtended.Utilities
                 "Enable status readout",
                 true,
                 "Whether the status readout line is computed/updated at all. Disable to skip this work entirely."
+                ));
+
+            // ATTITUDE OFFSETS
+            foreach (var mode in OffsetModes)
+            {
+                // SurfaceSurf needs a 90/90/-90 "level, nose-forward" default instead of the usual
+                // 0/0/0 - BuildPointingRotation's LookRotation(north, upwards) doesn't land on a level
+                // attitude at a zero offset the way every other mode's target vector does.
+                var (defaultHeading, defaultPitch, defaultRoll) = mode == AttitudeMode.SurfaceSurf
+                    ? (90f, 90f, -90f)
+                    : (0f, 0f, 0f);
+
+                AttitudeOffsets[mode] = (
+                    new ConfigValue<float>(Plugin.SWConfiguration.Bind(
+                        "Attitude offsets", $"{mode} heading", defaultHeading,
+                        $"Remembered Heading offset for {mode}.")),
+                    new ConfigValue<float>(Plugin.SWConfiguration.Bind(
+                        "Attitude offsets", $"{mode} pitch", defaultPitch,
+                        $"Remembered Pitch offset for {mode}.")),
+                    new ConfigValue<float>(Plugin.SWConfiguration.Bind(
+                        "Attitude offsets", $"{mode} roll", defaultRoll,
+                        $"Remembered Roll offset for {mode}.")));
+            }
+
+            // HOVER
+            HoverVerticalVelocity = new(Plugin.SWConfiguration.Bind(
+                "Hover",
+                "Vertical velocity (m/s)",
+                0f,
+                "Remembered target vertical speed for Hover mode."
                 ));
         }
     }
