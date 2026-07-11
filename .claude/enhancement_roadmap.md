@@ -1,7 +1,6 @@
 # Enhancement roadmap — SAS Extended
 
-Top-10 recommendations (2026-07-10) for features to introduce and refactors to optimize/stabilize
-existing features. Derived from a review of `mod_specifics.md`, the hover debugging history
+Top-10 recommendations (2026-07-10) for features to introduce and refactors to optimize/stabilize existing features. Derived from a review of `mod_specifics.md`, the hover debugging history. Already solved recommendations are deleted from the file.
 (`hover_mode_fixes.md`), and the full mod source under `Assets/SASExtended/Code/`. Ordered roughly
 by value-for-effort within each section.
 
@@ -34,30 +33,8 @@ SURF/TGT/SPEC.
 
 ## Refactors — optimize and stabilize
 
-### 4. Vessel-lifecycle hardening in `SASManager`
 
-`Update` guards `_vessel == null`, but `SetMode` dereferences `_vessel.Autopilot` unguarded
-(NRE if clicked with no active vessel); `_killRotTarget` and Hover's `_throttleIntegral` are
-captured for one vessel and silently apply to whatever vessel becomes active after a
-switch/undock/revert; nothing resets `AttitudeMode` on scene exit. Subscribe to
-vessel-change/game-state messages and disengage cleanly. **Probably the biggest latent-bug
-reservoir in the codebase.**
-
-### 5. Compute telemetry vectors on demand, not all-up-front
-
-`SetRotation` reframes ~15 direction vectors plus walks the body tree for the parent star
-(`GetParentStar`) every tick, at up to 50 Hz, even when the mode needs exactly one of them.
-Move the vector selection into the mode branches — or a mode → vector-selector table, which
-would also collapse the 20-case switch and the 20 one-line `SetXxx` wrappers. Cuts per-tick
-work by ~90% and shrinks the file substantially.
-
-### 6. Gate debug-log string building
-
-Both `[SetRotation]` and `[Hover/attitude]` build large interpolated strings every tick
-regardless of whether debug logging is enabled — allocation and formatting cost in the hot
-loop. Wrap them in a level check or a config-backed "diagnostics" flag
-
-### 7. Extract the pure math into a testable layer + delete dead code
+### 4. Extract the pure math into a testable layer + delete dead code
 
 The offset math was validated via a standalone quaternion simulation and the hover law took
 11 in-game rounds — both because nothing is testable outside the Unity editor. Pull
