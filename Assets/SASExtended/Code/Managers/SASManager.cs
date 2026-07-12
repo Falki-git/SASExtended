@@ -45,6 +45,14 @@ public class SASManager : MonoBehaviour
     public double AngleToRotation_small = 10;
     public double AngleToRotation_large = 30;
 
+    // Max rate the commanded setpoint is allowed to slew toward the true target (_rotation) per
+    // second - caps how large a single-tick reorientation Redux's SAS PID is ever asked to track.
+    // Default picked from the Prograde->Retrograde oscillation bug's own telemetry: the vessel
+    // sustained ~60-68 deg/s during the (bad) unlimited-jump case, so a flat cap in that
+    // neighborhood should remove the overshoot/reversal without meaningfully slowing a typical
+    // reorientation. See AdvanceCommandedRotation.
+    public double AttitudeSlewMaxRate = 60; // deg/s
+
     // --- Hover control ---------------------------------------------------------------------------
     // Hover both points the vessel (thrust axis up, tilted to null horizontal velocity) and drives
     // the throttle - the throttle value is read back by the Harmony patch on FlightInputHandler (see
@@ -108,6 +116,17 @@ public class SASManager : MonoBehaviour
     // SimulationObject.Telemetry accessor instead of the private VesselComponent._telemetryComponent field.
     private TelemetryComponent _telemetry => _vessel.SimulationObject.Telemetry;
     private Rotation _rotation;
+    // Setpoint actually fed to LockRotation - each tick, AdvanceCommandedRotation recomputes this
+    // fresh as "the vessel's ACTUAL current attitude, moved up to AttitudeSlewMaxRate deg/s toward
+    // _rotation (the true target)". Deliberately anchored to the vessel's real attitude every tick
+    // rather than slewed from this field's own previous value - see AdvanceCommandedRotation's
+    // comment for why that distinction matters (an earlier version that slewed from its own prior
+    // value let the setpoint race ahead of the real vessel and reach the target early, reproducing
+    // the oscillation this exists to fix). Seeded from the vessel's real current attitude on every
+    // fresh engage (SetMode) and cleared in ResetPerVesselState purely so the diagnostic log's
+    // commandedAngleToTarget reads sensibly on the very first tick after an engage; not load-bearing
+    // for AdvanceCommandedRotation itself since it no longer depends on this field's prior value.
+    private Rotation _commandedRotation;
     // Attitude held for AttitudeMode.KillRot - captured once at engage time (see SetSASKillrot) and
     // then just held, mirroring the game's own vanilla StabilityAssist ("SAS off, kill rotation, hold
     // whatever attitude you're currently at" - not pointed at any particular direction like north).
@@ -203,8 +222,15 @@ public class SASManager : MonoBehaviour
 
         if (_UT - _lastRefreshTime > RefreshInterval /*DebugUI.Instance.RefreshInterval*/)
         {
+            // Clamp dt to RefreshInterval_long: normal operation already keeps elapsed time within
+            // the 0.02-0.08s adaptive band (no-op here), but if SAS Extended was idle for a while
+            // (mode was None, or a scene hitch), an unclamped dt would let RotateTowards snap
+            // straight to target on the very first tick - silently reintroducing the oscillation
+            // bug AdvanceCommandedRotation exists to fix, right when it matters most.
+            double dt = Math.Min(_UT - _lastRefreshTime, RefreshInterval_long);
             SetRotation();
-            vessel.Autopilot.SAS.LockRotation(_rotation);
+            AdvanceCommandedRotation(dt);
+            vessel.Autopilot.SAS.LockRotation(_commandedRotation);
             _lastRefreshTime = _UT;
 
             SetRefreshInterval();
@@ -539,14 +565,73 @@ public class SASManager : MonoBehaviour
         if (Settings.VerboseLoggingEnabled.Value)
         {
             var angleToTarget = GetAngleToRotation();
+            var (currentHeading, currentPitch, currentRoll) = ComputeHeadingPitchRoll(north, upwards, _vessel.ControlTransform.Rotation);
+            var angularVelocity = GetAngularVelocityDegPerSec();
+            // Logged BEFORE AdvanceCommandedRotation runs this tick (Update() calls SetRotation()
+            // first) - this is the gap the upcoming slew step is about to close, so comparing it
+            // across ticks shows whether the commanded setpoint is closing on the true target at
+            // roughly slewCapDeg per tick, never jumping straight to it. Mirrors GetAngleToRotation's
+            // reframe-then-Vector3d.Angle pattern, just comparing _commandedRotation instead of the
+            // vessel's actual attitude.
+            var commandedReframed = Rotation.Reframed(_commandedRotation, _rotation.coordinateSystem);
+            var commandedAngleToTarget = Vector3d.Angle(commandedReframed.localRotation * Vector3d.up, _rotation.localRotation * Vector3d.up);
+            var slewCapDeg = AttitudeSlewMaxRate * Math.Min(_UT - _lastRefreshTime, RefreshInterval_long);
             _LOGGER.LogDebug(
-                $"[SetRotation] mode={AttitudeMode} offsets(H={effX:F1}[{XEnabled}],P={effY:F1}[{YEnabled}],R={effZ:F1}[{ZEnabled}]) angleToTarget={angleToTarget:F2}deg " +
+                $"[SetRotation] mode={AttitudeMode} heading={currentHeading:F1}deg pitch={currentPitch:F1}deg roll={currentRoll:F1}deg " +
+                $"angularVelocity={angularVelocity:F1}deg/s altitude={_vessel.AltitudeFromSurface:F1}m verticalSpeed={_vessel.VerticalSrfSpeed:F2}m/s " +
+                $"offsets(H={effX:F1}[{XEnabled}],P={effY:F1}[{YEnabled}],R={effZ:F1}[{ZEnabled}]) angleToTarget={angleToTarget:F2}deg " +
+                $"commandedAngleToTarget={commandedAngleToTarget:F2}deg slewCapDeg={slewCapDeg:F2} " +
                 $"upwards={FormatVector(upwards)} north={FormatVector(north)}" +
                 (loggedTarget.HasValue ? $" target={FormatVector(loggedTarget.Value)}" : ""));
         }
     }
 
+    // Rate-limits the setpoint actually handed to LockRotation. Anchored to the vessel's ACTUAL
+    // current attitude every tick (ControlTransform.Rotation) rather than the previous
+    // _commandedRotation value - slewing from the setpoint's own prior value let it race ahead of
+    // the real vessel (which is torque/inertia-limited) and reach the true target in a few seconds
+    // while the vessel itself was still 100+ degrees away, at which point we were once again handing
+    // Redux's SAS PID the raw, un-smoothed target - reproducing the original oscillation, just
+    // delayed instead of fixed (confirmed in-game: commandedAngleToTarget hit 0 while angleToTarget
+    // was still ~77 degrees and roll was mid-oscillation). Anchoring to the vessel's real attitude
+    // instead means the commanded setpoint is never more than maxDegrees ahead of wherever the
+    // vessel actually is, so the PID's tracking error is always bounded regardless of how fast the
+    // vessel can physically turn.
+    //
+    // _rotation's coordinateSystem varies by AttitudeMode (referenceFrame for pointing modes,
+    // ControlTransform's own frame for KillRot/Maneuver's no-target fallback, the universe inertial
+    // frame for Hold), so the vessel's attitude is reframed into _rotation's CURRENT coordinateSystem
+    // every single tick before interpolating - never assume they already share a frame (mirrors how
+    // Rotation.Slerp reframes internally). QuaternionD.RotateTowards is the engine's own max-angle-
+    // step primitive (Slerp clamped to at most maxDegreesDelta) - see the [SetRotation] log's
+    // commandedAngleToTarget/slewCapDeg fields to verify this in a Player.log capture.
+    private void AdvanceCommandedRotation(double dt)
+    {
+        var currentAttitude = Rotation.Reframed(_vessel.ControlTransform.Rotation, _rotation.coordinateSystem);
+        double maxDegrees = AttitudeSlewMaxRate * Math.Max(0, dt);
+        _commandedRotation = _rotation; // adopt the true target's coordinateSystem
+        _commandedRotation.localRotation =
+            QuaternionD.RotateTowards(currentAttitude.localRotation, _rotation.localRotation, maxDegrees);
+    }
+
     private static string FormatVector(Vector v) => $"({v.vector.x:F3},{v.vector.y:F3},{v.vector.z:F3})";
+
+    // Actual current compass heading/pitch/roll of the vessel (relative to north/horizontal),
+    // independent of whatever direction any mode happens to be pointing at - used both at
+    // mode-activation time (SetMode) and in the regular per-tick telemetry log below, so
+    // troubleshooting always has a ground truth for "where was the vessel actually facing/how was it
+    // banked" alongside the commanded offsets. Reuses GetCurrentOffsetAngles' solve-for-offset trick
+    // with the horizon frame itself as the "look" rotation (heading 0/pitch 0/roll 0 == pointing at
+    // north, level, wings level) instead of whatever the engaged mode's own target is. Logging roll
+    // here (previously omitted) is what lets a violent-roll-during-reorientation report actually be
+    // confirmed from the log: a real multi-rotation roll shows up as this value cycling through its
+    // full +-180 range repeatedly between successive ticks, instead of just heading/pitch swinging.
+    private static (double heading, double pitch, double roll) ComputeHeadingPitchRoll(Vector north, Vector upwards, Rotation vesselRotation)
+    {
+        var horizonLook = Rotation.LookRotation(north, upwards);
+        var current = Rotation.Reframed(vesselRotation, horizonLook.coordinateSystem);
+        return AttitudeMath.GetCurrentOffsetAngles(horizonLook.localRotation, current.localRotation);
+    }
 
     // Builds the commanded attitude for a "point the nose at `target`" mode: LookRotation aligns local
     // up (the nose - see the trailing Euler(90,0,0)) with `target` exactly, then the H/P/R offsets are
@@ -645,9 +730,26 @@ public class SASManager : MonoBehaviour
         if (!TryGetVesselToEngage(mode.ToString(), out var vessel))
             return;
 
-        _LOGGER.LogInfo($"SAS mode -> {mode} (was {AttitudeMode})");
+        // Snapshot heading/pitch/roll/hover (altitude, vertical speed) state at the exact moment any
+        // mode engages - always-on (LogInfo, not gated behind VerboseLoggingEnabled) so there's a
+        // ground-truth starting point for every mode switch even with verbose per-tick logging off.
+        var telemetry = vessel.SimulationObject.Telemetry;
+        telemetry.RefreshAutopilotTelemetry();
+        var north = telemetry.HorizonNorth;
+        var upwards = Vector.Reframed(Vector.normalize(Position.Delta(telemetry.RootPosition, telemetry.SOIPosition)), north.coordinateSystem);
+        var currentAttitude = vessel.ControlTransform.Rotation;
+        var (heading, pitch, roll) = ComputeHeadingPitchRoll(north, upwards, currentAttitude);
+
+        _LOGGER.LogInfo(
+            $"SAS mode -> {mode} (was {AttitudeMode}) heading={heading:F1}deg pitch={pitch:F1}deg roll={roll:F1}deg " +
+            $"angularVelocity={GetAngularVelocityDegPerSec():F1}deg/s " +
+            $"altitude={vessel.AltitudeFromSurface:F1}m verticalSpeed={vessel.VerticalSrfSpeed:F2}m/s");
         AttitudeMode = mode;
         _engagedVessel = vessel;
+        // Seed the slew setpoint from the vessel's real current attitude so the very first
+        // AdvanceCommandedRotation step starts from reality, not a stale rotation left over from a
+        // previous mode/vessel - see _commandedRotation's field comment.
+        _commandedRotation = currentAttitude;
         vessel.Autopilot.SetActive(true);
     }
 
@@ -716,6 +818,7 @@ public class SASManager : MonoBehaviour
     {
         _killRotTarget = default;
         _holdTarget = default;
+        _commandedRotation = default;
         _throttleIntegral = 0;
         _hoverThrottleIntegralKnown = false;
         _hoverCosTilt = 1.0;
@@ -814,9 +917,10 @@ public class SASManager : MonoBehaviour
         _filteredThrustDrivenAccel = vessel.gravityForPos.magnitude; // matches a coasting vessel's true accel (0 thrust-driven) so the D term doesn't see a spurious jump from 0 on the first tick
         HoverThrottle = vessel.flightCtrlState.mainThrottle;
 
+        // Altitude/verticalSpeed/heading/pitch are already logged by SetMode just above - only the
+        // throttle seed is specific to Hover engagement.
         SetMode(AttitudeMode.Hover);
-        _LOGGER.LogInfo(
-            $"Hover engage altitude={vessel.AltitudeFromSurface:F1}m verticalSpeed={vessel.VerticalSrfSpeed:F2}m/s throttle={HoverThrottle:F2}");
+        _LOGGER.LogInfo($"Hover engage throttle={HoverThrottle:F2}");
     }
 
     /// <summary>
