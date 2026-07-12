@@ -607,6 +607,23 @@ public class SASManager : MonoBehaviour
     // commandedAngleToTarget/slewCapDeg fields to verify this in a Player.log capture.
     private void AdvanceCommandedRotation(double dt)
     {
+        // Hover is exempt: its target ("desired" thrust tilt, see AttitudeMode.Hover) is recomputed
+        // every tick as a direct function of the vessel's OWN current horizontal velocity - a tight
+        // closed loop, unlike every other mode's externally-driven target. Anchoring-and-chasing from
+        // the vessel's actual attitude bakes a persistent, never-closing tracking lag into that loop
+        // (Player.log showed commandedAngleToTarget holding steady at ~1.7deg indefinitely, never
+        // reaching 0) - enough phase delay to turn horizontal-velocity nulling into a slow precession
+        // instead of convergence (heading rotating ~24deg/s forever, horizontal drift orbiting rather
+        // than decaying to 0). Hover's own desired vector never jumps antipodally the way
+        // Prograde<->Retrograde does (see AttitudeMode.Hover - it's always within a bounded cone near
+        // "up"), so it never needed this rate limiter's protection in the first place; feed it straight
+        // through, matching pre-slew-limiter behavior for this mode only.
+        if (AttitudeMode == AttitudeMode.Hover)
+        {
+            _commandedRotation = _rotation;
+            return;
+        }
+
         var currentAttitude = Rotation.Reframed(_vessel.ControlTransform.Rotation, _rotation.coordinateSystem);
         double maxDegrees = AttitudeSlewMaxRate * Math.Max(0, dt);
         _commandedRotation = _rotation; // adopt the true target's coordinateSystem
