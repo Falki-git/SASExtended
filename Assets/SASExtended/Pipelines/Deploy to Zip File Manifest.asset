@@ -14,7 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: ksp2community.ksp2unitytools.editor::Ksp2UnityTools.Editor.Modding.Thunderkit.CopyFolderDatum
   StagingPaths: []
   sourcePath: Assets\SASExtended/Copied
-  destinationPath: Deploy/SASExtended
+  destinationPath: Deploy/SASExtended/SASExtended
 --- !u!114 &11400000
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -47,9 +47,9 @@ MonoBehaviour:
   m_Name: AddressablesGroupDatum
   m_EditorClassIdentifier: ksp2community.ksp2unitytools.editor::Ksp2UnityTools.Editor.Modding.Thunderkit.AddressablesGroupDatum
   StagingPaths:
-  - Deploy/SASExtended/addressables
+  - Deploy/SASExtended/SASExtended/addressables
   mod: {fileID: 11400000, guid: 6f0656f66684bde40bfc1415756e62bf, type: 2}
-  targetFolder: Deploy/SASExtended/addressables
+  targetFolder: Deploy/SASExtended/SASExtended/addressables
 --- !u!114 &489142975210430155
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -63,7 +63,7 @@ MonoBehaviour:
   m_Name: AssemblyDefinitions
   m_EditorClassIdentifier: ThunderKit.Core::ThunderKit.Core.Manifests.Datums.AssemblyDefinitions
   StagingPaths:
-  - Deploy/SASExtended
+  - Deploy/SASExtended/SASExtended
   definitions:
   - {fileID: 5897886265953266890, guid: c9ca131dd0392cd4e8061541bbf17517, type: 3}
 --- !u!114 &2836589071094597725
@@ -76,7 +76,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: f22bb7fd1d3b56a48bc52f8e407901d6, type: 3}
-  m_Name: SASExtended - Deploy
+  m_Name: ManifestIdentity
   m_EditorClassIdentifier: ThunderKit.Core::ThunderKit.Core.Manifests.Datum.ManifestIdentity
   StagingPaths: []
   Author: nobody
@@ -97,6 +97,6 @@ MonoBehaviour:
   m_Name: TextAssets
   m_EditorClassIdentifier: ksp2community.ksp2unitytools.editor::Ksp2UnityTools.Editor.Modding.Thunderkit.TextAssets
   StagingPaths:
-  - Deploy/SASExtended
+  - Deploy/SASExtended/SASExtended
   possibleFolders:
   - Assets\SASExtended
