@@ -145,6 +145,11 @@ public class SASManager : MonoBehaviour
     // vessel.
     private VesselComponent _engagedVessel;
 
+    // Tracks the no-vessel -> vessel transition for the stock-SAS reconciliation check below -
+    // deliberately separate from _engagedVessel, which only ever refers to a vessel SAS Extended
+    // itself engaged. See that check's comment for why this transition specifically matters.
+    private VesselComponent _lastSeenVessel;
+
     private void Start()
     {
         Instance = this;
@@ -157,6 +162,27 @@ public class SASManager : MonoBehaviour
 
     private void Update()
     {
+        var vessel = _vessel;
+
+        // Stock SAS (Autopilot.Enabled/AutopilotMode) is persisted in the save file; AttitudeMode
+        // here is not - it's an in-memory field on this MonoBehaviour, reset to None every scene/
+        // save load. If a save is taken at the moment a SAS Extended mode had stock SAS latched on
+        // (e.g. Hover mid-engage right before a crash) and later reloaded, the newly-created vessel
+        // comes back with stock SAS already Enabled with nothing feeding it a live LockRotation
+        // target - stuck half-engaged rather than off, and AttitudeMode == None means Update() below
+        // would otherwise never notice or touch it. Reconciled only on the specific no-vessel ->
+        // vessel transition (flight start / save load / scene load) - NOT on an ordinary
+        // vessel-to-vessel switch mid-flight (_lastSeenVessel already non-null), where the new
+        // vessel's own stock SAS state is the player's legitimate business and must not be touched.
+        if (vessel != null && _lastSeenVessel == null && AttitudeMode == AttitudeMode.None
+            && vessel.Autopilot != null && vessel.Autopilot.Enabled)
+        {
+            _LOGGER.LogInfo(
+                $"Vessel '{vessel.Name}' became active with stock SAS already enabled but SAS Extended has no record of engaging it (likely a save/scene reload) - disabling stock SAS so it isn't left stuck.");
+            vessel.Autopilot.SetActive(false);
+        }
+        _lastSeenVessel = vessel;
+
         if (AttitudeMode == AttitudeMode.None)
             return;
 
@@ -165,7 +191,6 @@ public class SASManager : MonoBehaviour
         // was exited entirely (_vessel goes null). Disengage rather than silently applying this
         // vessel's captured state (KillRot's held attitude, Hover's throttle integrator) to whatever
         // vessel is active now.
-        var vessel = _vessel;
         if (vessel == null || vessel != _engagedVessel)
         {
             DisengageForVesselChange(vessel);
@@ -220,14 +245,27 @@ public class SASManager : MonoBehaviour
             return;
         }
 
-        if (_UT - _lastRefreshTime > RefreshInterval /*DebugUI.Instance.RefreshInterval*/)
+        // _UT - _lastRefreshTime can go NEGATIVE: _lastRefreshTime is a plain UniverseTime bookmark
+        // that survives a save/quickload (this MonoBehaviour is never destroyed across one), but
+        // loading a save rewinds UniverseTime backward to whenever the save was taken. Without the
+        // "< 0" branch below, a rewind left this gate permanently closed (elapsed stays negative,
+        // never exceeds RefreshInterval) until real gameplay time climbed back up past the stale
+        // pre-reload _lastRefreshTime - SetMode()/the Autopilot Enabled/AutopilotMode guard above all
+        // read back fine, so the mode LOOKED engaged, but SetRotation()/LockRotation() silently never
+        // ran and the vessel got no commands at all until the gap closed (confirmed via Player.log:
+        // reload -> re-engage logged normally -> vessel motionless for a stretch of real time before
+        // starting to respond, matching the pre-reload/post-reload UT gap exactly).
+        double elapsed = _UT - _lastRefreshTime;
+        if (elapsed < 0 || elapsed > RefreshInterval /*DebugUI.Instance.RefreshInterval*/)
         {
             // Clamp dt to RefreshInterval_long: normal operation already keeps elapsed time within
             // the 0.02-0.08s adaptive band (no-op here), but if SAS Extended was idle for a while
             // (mode was None, or a scene hitch), an unclamped dt would let RotateTowards snap
             // straight to target on the very first tick - silently reintroducing the oscillation
-            // bug AdvanceCommandedRotation exists to fix, right when it matters most.
-            double dt = Math.Min(_UT - _lastRefreshTime, RefreshInterval_long);
+            // bug AdvanceCommandedRotation exists to fix, right when it matters most. A negative
+            // elapsed (UT rewind, see above) is clamped to 0 rather than clamped-and-fed-through - a
+            // negative dt would make AdvanceCommandedRotation/RotateTowards's maxDegrees negative too.
+            double dt = Math.Min(Math.Max(elapsed, 0), RefreshInterval_long);
             SetRotation();
             AdvanceCommandedRotation(dt);
             vessel.Autopilot.SAS.LockRotation(_commandedRotation);
