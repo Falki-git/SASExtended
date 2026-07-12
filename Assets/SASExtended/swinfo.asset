@@ -15,12 +15,15 @@ MonoBehaviour:
   id: SASExtended
   name: SAS Extended
   author: Falki
-  description: A sample mod for KSP2
-  version: 0.1.0
+  description: 'Extends the funcionalities of stock SAS.
+
+    Enables additional
+    modes, attitudes tweaks and hover.'
+  version: 1.0.0
   versionCheck: 
   minKsp2Version: 0.2.8.3
   maxKsp2Version: '*'
-  source: 
+  source: https://github.com/Falki-git/SASExtended
   allGroup: {fileID: 11400000, guid: 811d6add6e3ceb34c8eeee1fba1f281c, type: 2}
   partsGroup: {fileID: 11400000, guid: 300c82dc42a4beb4a9456f7686335ca5, type: 2}
   missionsGroup: {fileID: 11400000, guid: 45470519bcea19640bf0c93ea31b7efa, type: 2}
