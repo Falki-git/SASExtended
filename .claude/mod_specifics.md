@@ -297,12 +297,60 @@ Claude cannot drive the Unity editor to test in-engine). It has been replaced wi
    against `ApplyOffsets`'s trailing `Euler(90,0,0)` (both are pure-X rotations, so they commute)
    and reduces to the captured attitude unchanged when all three offsets are 0.
 
+8. **Attitude slew-rate limiting (added 2026-07-11, `AdvanceCommandedRotation`/`AttitudeSlewMaxRate`)**
+   fixes an oscillation bug found via the telemetry logging described below: switching between two
+   antipodal modes (e.g. `OrbitPrograde` → `OrbitRetrograde`, an exact 180° flip of the target) used
+   to hand Redux's `SAS.LockRotation` the new target directly, every tick, with no smoothing —
+   confirmed via decompile that `VesselSAS.LockRotation` does a plain unsmoothed assignment
+   internally, so a near-antipodal single-tick target change is the classic ill-conditioned case for
+   quaternion attitude control (the "shortest rotation axis" is nearly undefined there). Logged
+   telemetry showed the vessel oscillating hard in response — angular velocity ramping to a peak of
+   67.7°/s, dipping to ~23°/s, ramping back up to a second peak of 62°/s, then damping out, with roll
+   swinging 0° → +140° → ‑16.5° before settling; total settle time was ~267 refresh ticks (several
+   seconds). Fix: don't feed `LockRotation` the raw target (`_rotation`) directly — feed it a
+   separate `_commandedRotation`, computed each tick in `AdvanceCommandedRotation` (called from
+   `Update()` right after `SetRotation()`) as **the vessel's own current attitude, moved up to
+   `AttitudeSlewMaxRate` deg/s (default 60) toward `_rotation`** via `KSP.Sim.QuaternionD.RotateTowards`
+   (the engine's own max-angle-step primitive — no hand-rolled Slerp needed).
+   **First attempt got this wrong and is worth recording:** slewing `_commandedRotation` from *its
+   own previous value* (rather than from the vessel's live attitude) let the setpoint race ahead of
+   the real, torque/inertia-limited vessel — in-game telemetry showed `commandedAngleToTarget`
+   reaching 0 (setpoint fully caught up to the true target) while `angleToTarget` (the vessel's real
+   attitude) was still ~77° away and roll was still mid-oscillation. Once the setpoint arrives early,
+   `LockRotation` is once again fed the raw, un-smoothed target with a huge tracking error — same bug,
+   just delayed a few seconds instead of fixed. **Fix for the fix:** anchor to
+   `_vessel.ControlTransform.Rotation` (reframed into `_rotation`'s coordinate system) every tick
+   instead, so the commanded setpoint is never more than `maxDegrees` ahead of wherever the vessel
+   *actually* is — this bounds the PID's tracking error at all times regardless of how fast the
+   vessel can physically turn, rather than letting the setpoint outrun it.
+   `_rotation`'s coordinateSystem is **not** constant across `AttitudeMode`s (pointing modes use
+   `referenceFrame`/`HorizonNorth`'s frame; `KillRot`/`Maneuver`'s no-target fallback use
+   `ControlTransform`'s own frame; `Hold` uses the universe inertial frame) — so the reframe happens
+   unconditionally every tick, never cached/assumed stable, to avoid reintroducing the same class of
+   coordinate-mixing bug fixed elsewhere in this file. `_commandedRotation` is seeded from the
+   vessel's real current attitude on every fresh engage (`SetMode`) and cleared in
+   `ResetPerVesselState` purely so the diagnostic log reads sensibly on the very first post-engage
+   tick — not load-bearing for `AdvanceCommandedRotation` itself, which no longer depends on this
+   field's prior value at all. The default rate (60°/s) is picked from the bug's own telemetry (the
+   vessel demonstrably sustained ~60-68°/s) specifically so a typical reorientation's total settle
+   time stays roughly the same or improves once the oscillation — which was largely wasted motion —
+   is gone, rather than the fix simply making all reorientations slower. **Status: fix for the fix
+   is implemented but not yet in-game re-verified** — needs another Player.log capture of the
+   Prograde→Retrograde switch to confirm `angularVelocity` no longer double-humps and
+   `commandedAngleToTarget` stays small (never hits 0 while `angleToTarget` is still large).
+
 **Diagnostics:** `SASManager` logs through ReduxLib's per-class logger
-(`SASExtended|SASManager`) — `LogInfo` on every mode change (`SetMode`), and a `LogDebug` line at
-the end of every `SetRotation()` tick with the mode, applied H/P/R values (and each axis's
-enabled/disabled flag), angle-to-target, and all the orbit/horizon direction vectors — so future
-orientation bugs can be diagnosed from the log directly instead of re-deriving everything through
-decompilation again.
+(`SASExtended|SASManager`) — `LogInfo` on every mode change (`SetMode`), including the vessel's
+actual current heading/pitch/roll (relative to north/horizontal, via the shared
+`ComputeHeadingPitchRoll` helper — independent of whatever the new/old mode points at) plus
+altitude, vertical speed, and angular velocity, so every mode switch has a ground-truth snapshot
+even with verbose logging off. A `LogDebug` line at the end of every `SetRotation()` tick adds the
+same heading/pitch/roll/angular-velocity/altitude/vertical-speed readout (gated behind
+`VerboseLoggingEnabled`) alongside the mode, applied H/P/R values (and each axis's enabled/disabled
+flag), angle-to-target, `commandedAngleToTarget`/`slewCapDeg` (how far the slewed setpoint still has
+to close on the true target, and the cap applied that tick — see item 8 above), and all the
+orbit/horizon direction vectors — so future orientation, hover, and slew-rate bugs can be diagnosed
+from the log directly instead of re-deriving everything through decompilation again.
 
 **Remaining known gaps:** SURF/TGT/SPEC direction buttons are now wired end-to-end (`SASManager`
 switch cases + `SetXxx()` calls + `MainWindowController` toggle registration) but **not yet
