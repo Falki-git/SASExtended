@@ -194,7 +194,7 @@ All in `SASManager.cs` / `PureMath/AttitudeMath.cs`:
    - `KillRot` captures `_vessel.ControlTransform.Rotation` once at engage time and holds it every
      tick — mirrors vanilla `StabilityAssist`.
    - `Maneuver` points at `_telemetry.ManeuverDirection` through the normal pipeline, guarded by
-     `HasManeuver`; falls back to holding current attitude (same as `KillRot`) with no node planned.
+     `HasManeuver`.
 6. Fed to `SAS.LockRotation` on an adaptive refresh interval (`RefreshInterval_short/mid/long`,
    keyed off angle-to-target).
 7. `Hold` (SPEC → HOLD) goes through the same H/P/R trim path as the pointing modes, but its "look"
