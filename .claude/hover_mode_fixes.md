@@ -292,9 +292,3 @@ clamped to `HoverTiltAuthorityFloorMin`, an angle cap of ~90 deg). **Fix:** repl
 set `false` only in `SetHover()` and `true` unconditionally the first time `UpdateHoverThrottle` runs
 after that (regardless of what value it computes) - so "do we have real data" and "what does the
 data say" are no longer the same test. Not yet re-tested.
-
-**Still pending (not part of this fix, per [[hover-roadmap]]):** the **toggle for whether to cancel
-horizontal velocity at all** is UI-facing with no existing UXML control to wire it to yet (the X/Y/Z
-offset fields' `FloatField` + +/- `Button` pattern in `SASExtended.uxml` is the natural template to
-reuse for a future target-vertical-speed input control too, now that `HoverTargetVerticalSpeed` is a
-live setpoint rather than a dead field).

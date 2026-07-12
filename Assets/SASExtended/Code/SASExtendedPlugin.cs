@@ -69,7 +69,7 @@ namespace SASExtended
         /// Unity's native serializer cannot resolve for a late-loaded mod assembly, and there is no
         /// runtime registry to fix it. So the controls ship with the legacy UxmlFactory system; the
         /// <c>[UxmlElement]</c> face exists only behind the editor-side <c>SASX_UI_AUTHORING</c> define
-        /// for UI Builder authoring — see <c>.claude/ui_authoring_mode.md</c>.)
+        /// for UI Builder authoring — see <c>.claude/custom_uxml_controls.md</c>.)
         /// </summary>
         private static void RegisterUxmlFactories()
         {
