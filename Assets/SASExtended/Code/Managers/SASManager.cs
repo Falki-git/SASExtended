@@ -494,11 +494,28 @@ public class SASManager : MonoBehaviour
 
                 // Point the vessel's nose along the desired thrust vector directly via LookRotation
                 // (see the comment on AttitudeMode.OrbitPrograde). Heading/pitch aren't user-configurable
-                // in Hover, only roll - which gets the same free-when-disabled treatment as elsewhere.
-                var look = Rotation.LookRotation(desired, upwards);
+                // in Hover, and neither is roll in practice - the hover-controls panel (see
+                // MainWindowController.UpdatePanelForMode) replaces the shared Heading/Pitch/Roll panel
+                // entirely and has no roll control of its own, so ZEnabled/Z here would just be
+                // whatever stale value was left over from the last non-Hover mode that did expose them.
+                // Roll is therefore always free (matches the vessel's own current roll every tick, same
+                // mechanism the shared panel's disabled-axis case uses) regardless of ZEnabled.
+                //
+                // Up-hint is "north", NOT "upwards": "desired" is always within a few degrees of
+                // "upwards" in normal hover (near-zero drift means desired == up exactly - see just
+                // above), which is the same degenerate/near-parallel forward-vs-up-hint case
+                // AttitudeMode.SurfaceUp already works around by swapping in "north". Using "upwards"
+                // here left LookRotation's twist-around-forward numerically ill-conditioned, which
+                // showed up in-game as a slow continuous roll (and, since pitch sits ~90deg, a coupled
+                // heading) spin while hovering - confirmed via Player.log's [SetRotation] telemetry
+                // (heading and roll drifting together at a steady few deg/s with angleToTarget staying
+                // near 0, i.e. the autopilot faithfully tracking a commanded target that was itself
+                // spinning). "north" is always ~perpendicular to "up" so this is well-conditioned
+                // regardless of tilt angle.
+                var look = Rotation.LookRotation(desired, north);
                 effX = 0;
                 effY = 0;
-                effZ = ZEnabled ? Z : GetCurrentOffsetAngles(look).roll;
+                effZ = GetCurrentOffsetAngles(look).roll;
                 _rotation = look;
                 _rotation.localRotation = look.localRotation * QuaternionD.Euler(0, 0, effZ) * QuaternionD.Euler(90, 0, 0);
 
@@ -607,6 +624,23 @@ public class SASManager : MonoBehaviour
     // commandedAngleToTarget/slewCapDeg fields to verify this in a Player.log capture.
     private void AdvanceCommandedRotation(double dt)
     {
+        // Hover is exempt: its target ("desired" thrust tilt, see AttitudeMode.Hover) is recomputed
+        // every tick as a direct function of the vessel's OWN current horizontal velocity - a tight
+        // closed loop, unlike every other mode's externally-driven target. Anchoring-and-chasing from
+        // the vessel's actual attitude bakes a persistent, never-closing tracking lag into that loop
+        // (Player.log showed commandedAngleToTarget holding steady at ~1.7deg indefinitely, never
+        // reaching 0) - enough phase delay to turn horizontal-velocity nulling into a slow precession
+        // instead of convergence (heading rotating ~24deg/s forever, horizontal drift orbiting rather
+        // than decaying to 0). Hover's own desired vector never jumps antipodally the way
+        // Prograde<->Retrograde does (see AttitudeMode.Hover - it's always within a bounded cone near
+        // "up"), so it never needed this rate limiter's protection in the first place; feed it straight
+        // through, matching pre-slew-limiter behavior for this mode only.
+        if (AttitudeMode == AttitudeMode.Hover)
+        {
+            _commandedRotation = _rotation;
+            return;
+        }
+
         var currentAttitude = Rotation.Reframed(_vessel.ControlTransform.Rotation, _rotation.coordinateSystem);
         double maxDegrees = AttitudeSlewMaxRate * Math.Max(0, dt);
         _commandedRotation = _rotation; // adopt the true target's coordinateSystem
