@@ -536,9 +536,7 @@ public class MainWindowController : MonoBehaviour
                 break;
 
             case AttitudeMode.Hover:
-                _statusLabel.text = sas.CancelHorizontalVelocity
-                    ? $"V-SPD: {FormatSpeed(sas.GetHoverVerticalSpeed())}  H-SPD: {FormatSpeed(sas.GetHoverHorizontalSpeed())}"
-                    : $"V-SPD: {FormatSpeed(sas.GetHoverVerticalSpeed())}  THR: {sas.HoverThrottle * 100:F0}%";
+                _statusLabel.text = $"V-SPD: {FormatSpeed(sas.GetHoverVerticalSpeed())}  H-SPD: {FormatSpeed(sas.GetHoverHorizontalSpeed())}";
                 break;
 
             default:
