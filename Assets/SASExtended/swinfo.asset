@@ -20,7 +20,7 @@ MonoBehaviour:
     Enables additional
     modes, attitudes tweaks and hover.'
   version: 1.0.0
-  versionCheck: 
+  versionCheck: https://raw.githubusercontent.com/Falki-git/SASExtended/refs/heads/main/Assets/SASExtended/swinfo.json
   minKsp2Version: 0.2.8.3
   maxKsp2Version: '*'
   source: https://github.com/Falki-git/SASExtended

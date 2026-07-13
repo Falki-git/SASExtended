@@ -3,10 +3,10 @@
   "mod_id": "SASExtended",
   "name": "SAS Extended",
   "author": "Falki",
-  "description": "Extends the funcionalities of stock SAS.\nEnables additional modes, attitudes tweaks and hover.",
+  "description": "Extends the functionalities of stock SAS.\nEnables additional modes, attitudes tweaks and hover.",
   "source": "https://github.com/Falki-git/SASExtended",
   "version": "1.0.0",
-  "version_check": "",
+  "version_check": "https://raw.githubusercontent.com/Falki-git/SASExtended/refs/heads/main/Assets/SASExtended/swinfo.json",
   "ksp2_version": {
     "min": "0.2.8.3",
     "max": "*"
