@@ -6,6 +6,7 @@ offsets, an inertial attitude lock, and a self-tuning powered-hover controller.
 
 > Built on the KSP2 **Redux / SpaceWarp2** modding stack (Unity 6, C# 9). Every mode below is
 > implemented, in-game tested, and shipping.
+> Showcase: https://www.youtube.com/watch?v=6EF_POq78kM
 
 ---
 
