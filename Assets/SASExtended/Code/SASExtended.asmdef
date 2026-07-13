@@ -95,6 +95,10 @@
     "VInspector.dll",
     "Newtonsoft.Json.dll"
   ],
+  "references": [
+    "Unity.ResourceManager",
+    "Unity.Addressables"
+  ],
   "autoReferenced": true,
   "noEngineReferences": false
 }
