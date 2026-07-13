@@ -142,6 +142,9 @@ namespace SASExtended
             var providers = new GameObject("SASExtended_Providers");
             providers.transform.parent = transform;
             providers.AddComponent<SASManager>();
+            // Draws the optional in-world flight-axis visuals (control axes, commanded-attitude arrow,
+            // CoM marker) toggled from the window. Lives alongside SASManager for the session.
+            providers.AddComponent<FlightAxesVisualizer>();
 
             // Apply Harmony patches in this assembly (the hover throttle override on FlightInputHandler).
             CreateHarmonyAndPatchAll();

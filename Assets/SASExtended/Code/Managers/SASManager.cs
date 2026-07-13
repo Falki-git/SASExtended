@@ -27,6 +27,23 @@ public class SASManager : MonoBehaviour
     public AttitudeMode AttitudeMode = AttitudeMode.None;
     public bool IsHoverActive => AttitudeMode == AttitudeMode.Hover;
 
+    // True while any SAS Extended mode is actively driving the vessel (i.e. not OFF/None). Read by
+    // FlightAxesVisualizer to decide whether the "commanded attitude" arrow should be shown.
+    public bool IsEngaged => AttitudeMode != AttitudeMode.None;
+
+    // The exact Rotation last handed to SAS.LockRotation this tick - the slew-limited setpoint
+    // (_commandedRotation), NOT the raw per-tick target (_rotation). Exposed for FlightAxesVisualizer's
+    // "commanded attitude" arrow so the visual matches what the autopilot is actually being told to
+    // hold. Holds a stale value once disengaged, so consumers must gate on IsEngaged first.
+    public Rotation CommandedRotation => _commandedRotation;
+
+    // The raw per-tick target the active mode wants to point at (_rotation), BEFORE the slew-rate limit
+    // (AdvanceCommandedRotation) is applied - i.e. the final orientation the mode is steering toward,
+    // which CommandedRotation slews up to over multiple ticks. Exposed for FlightAxesVisualizer's
+    // "target attitude" arrow; the two arrows diverge during a reorientation and coincide once settled.
+    // Holds a stale value once disengaged, so consumers must gate on IsEngaged first.
+    public Rotation TargetRotation => _rotation;
+
     // Read by MainWindowController to grey out the NODE button / TGT-tab mode buttons and by
     // Update() below to auto-disengage if the node/target disappears while its mode is active.
     // _vessel is guarded first since _telemetry (a property, not a field) NREs on a null _vessel.
