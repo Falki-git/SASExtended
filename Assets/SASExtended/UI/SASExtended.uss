@@ -165,6 +165,74 @@
     max-width: 150px;
 }
 
+.settings-button__container {
+    align-items: flex-end;
+    flex-grow: 1;
+    width: 10%;
+    height: 100%;
+    border-left-color: rgb(0, 0, 0);
+    border-right-color: rgb(0, 0, 0);
+    border-top-color: rgb(0, 0, 0);
+    border-bottom-color: rgb(0, 0, 0);
+    justify-content: center;
+    margin-right: 10px;
+}
+
+.settings-button {
+    border-left-width: 1px;
+    border-right-width: 1px;
+    border-top-width: 1px;
+    border-bottom-width: 1px;
+    background-color: rgba(15, 19, 24, 0);
+    width: 20px;
+    height: 20px;
+    padding-left: 3px;
+    padding-right: 3px;
+    padding-top: 3px;
+    padding-bottom: 3px;
+    -unity-background-scale-mode: scale-to-fit;
+    border-top-left-radius: 3px;
+    border-bottom-left-radius: 3px;
+    border-top-right-radius: 3px;
+    border-bottom-right-radius: 3px;
+    justify-content: center;
+    border-left-color: rgba(0, 0, 0, 0.02);
+    border-right-color: rgba(0, 0, 0, 0.02);
+    border-top-color: rgba(0, 0, 0, 0.02);
+    border-bottom-color: rgba(0, 0, 0, 0.02);
+}
+
+.settings-button:hover {
+    border-top-color: var(--background-lightgray-4-translucent);
+    border-right-color: var(--background-lightgray-4-translucent);
+    border-bottom-color: var(--background-lightgray-4-translucent);
+    border-left-color: var(--background-lightgray-4-translucent);
+    transition-duration: 0s;
+    transition-delay: 0s;
+}
+
+.settings-button:active {
+    border-top-color: var(--border-active-green);
+    border-right-color: var(--border-active-green);
+    border-bottom-color: var(--border-active-green);
+    border-left-color: var(--border-active-green);
+    transition-duration: 0s;
+    transition-delay: 0s;
+}
+
+.settings-button__background {
+    width: 100%;
+    height: 100%;
+    -unity-background-image-tint-color: var(--background-lightgray-4);
+    -unity-background-scale-mode: scale-to-fit;
+}
+
+.settings-button__background--checked {
+    width: 100%;
+    height: 100%;
+    -unity-background-image-tint-color: var(--led-checked-green);
+}
+
 .close-button__container {
     align-items: flex-end;
     flex-grow: 1;
@@ -196,14 +264,9 @@
     border-bottom-right-radius: 3px;
 }
 
-.close-button--hover--notused {
-    background-color: rgba(255, 255, 255, 0.25);
-}
-
 .close-button__background {
     width: 100%;
     height: 100%;
-    background-image: url("project://database/Assets/SASExtended/UI/Images/Icons/ICO-Close-med.png?fileID=21300000&guid=456a2a06d20612f4e96d2227e8ca601d&type=3#ICO-Close-med");
     -unity-background-scale-mode: scale-to-fit;
     -unity-background-image-tint-color: var(--background-lightgray-4);
 }
@@ -733,4 +796,48 @@
 
 .status-label {
     color: var(--yellowish);
+}
+
+.led-control-forward .side-toggle__led--checked {
+    background-color: rgb(65, 105, 225);
+}
+
+.led-control-up .side-toggle__led--checked {
+    background-color: rgb(255, 255, 255);
+}
+
+.led-control-right .side-toggle__led--checked {
+    background-color: rgb(255, 0, 0);
+}
+
+.led-commanded-attitude .side-toggle__led--checked {
+    background-color: rgb(255, 128, 0);
+}
+
+.led-target-attitude .side-toggle__led--checked {
+    background-color: rgb(153, 51, 230);
+}
+
+.led-orbital-prograde .side-toggle__led--checked {
+    background-color: rgb(0, 255, 0);
+}
+
+.led-orbital-normal .side-toggle__led--checked {
+    background-color: rgb(255, 0, 255);
+}
+
+.led-orbital-radial-in .side-toggle__led--checked {
+    background-color: rgb(0, 255, 255);
+}
+
+.led-surface-velocity .side-toggle__led--checked {
+    background-color: rgb(153, 153, 153);
+}
+
+.led-horizontal-velocity .side-toggle__led--checked {
+    background-color: rgb(128, 71, 26);
+}
+
+.led-com .side-toggle__led--checked {
+    background-color: rgb(255, 234, 4);
 }

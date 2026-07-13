@@ -83,6 +83,23 @@ public class MainWindowController : MonoBehaviour
     private Button _hoverVerticalVelocityZero;
     private SideToggleControl _cancelHorizontalVelocityToggle;
 
+    // Flight Axes visual toggles are wired in a loop over FlightAxesVisualizer.ToggleIds (see
+    // WireFlightAxesToggles) - they're independent of the mutually-exclusive mode toggles above, so
+    // they don't need individual fields or a place in _allModeToggles.
+
+    // Header settings button and the panels it swaps between: clicking it hides the main view
+    // (upper + middle containers) and shows the settings container that holds the Flight Axes toggles,
+    // and back. All null-guarded so the window still builds while this UXML is being authored.
+    private Button _settingsButton;
+    private VisualElement _settingsButtonBackground;
+    private VisualElement _settingsContainer;
+    private VisualElement _upperContainer;
+    private VisualElement _middleContainer;
+    private VisualElement _footer;
+    private bool _settingsOpen;
+
+    private const string SettingsButtonCheckedClass = "settings-button__background--checked";
+
     // Every mutually-exclusive mode toggle (global modes + all direction buttons across all tabs),
     // used by ClearAllModeToggles/RegisterModeButton so only one is ever shown toggled on.
     private SideToggleControl[] _allModeToggles;
@@ -415,6 +432,9 @@ public class MainWindowController : MonoBehaviour
         // HasManeuverNode/HasTarget values are available.
         UpdateNodeTargetAvailability();
 
+        WireFlightAxesToggles();
+        WireSettingsButton();
+
         // Get the close button from the window. Uses RegisterCallback<ClickEvent> rather than the
         // `.clicked` action, matching every other clickable element in this file (x/y/z-minus/plus/
         // first, tab toggles, etc.) rather than mixing two different click APIs.
@@ -734,6 +754,87 @@ public class MainWindowController : MonoBehaviour
     }
 
     #endregion
+
+    // Wires every Flight Axes visual toggle by iterating FlightAxesVisualizer.ToggleIds: the toggle's
+    // element name IS its visual id, so each click just pushes (id, IsToggled) to the visualizer. Each
+    // element is null-guarded so a not-yet-authored toggle doesn't break the rest of OnEnable. These are
+    // plain independent on/off toggles, NOT part of the mutually-exclusive mode set (_allModeToggles),
+    // so they're wired separately (and never touched by ClearAllModeToggles/OnSasManagerDisengaged).
+    private void WireFlightAxesToggles()
+    {
+        foreach (var id in FlightAxesVisualizer.ToggleIds)
+        {
+            var toggle = _root.Q<SideToggleControl>(id);
+            if (toggle == null)
+            {
+                _LOGGER.LogWarning($"Flight Axes toggle '{id}' not found in UXML - skipping wiring.");
+                continue;
+            }
+
+            toggle.SetEnabled(true);
+            toggle.SwitchToggleState(false, false);
+            var visualId = id; // capture per-iteration for the closure
+            toggle.RegisterCallback<ClickEvent>(evt =>
+            {
+                // SideToggleControl flips IsToggled in its own click handler (registered first, so it
+                // has already run here); a disabled toggle no-ops that flip, so guard to avoid
+                // re-applying a stale state.
+                if (!toggle.IsEnabled)
+                    return;
+                FlightAxesVisualizer.Instance?.SetVisual(visualId, toggle.IsToggled);
+            });
+        }
+    }
+
+    // Wires the header settings button. Clicking it swaps the window between the main view (upper +
+    // middle containers) and the settings container that holds the Flight Axes toggles. Every element
+    // is null-guarded so a not-yet-authored piece doesn't break the rest of OnEnable; the button starts
+    // in the main (settings-closed) view.
+    private void WireSettingsButton()
+    {
+        _settingsButton = _root.Q<Button>("settings-button");
+        _settingsButtonBackground = _root.Q<VisualElement>("settings-button__background");
+        _settingsContainer = _root.Q<VisualElement>("settings-container");
+        _upperContainer = _root.Q<VisualElement>("upper-container");
+        _middleContainer = _root.Q<VisualElement>("middle-container");
+        _footer = _root.Q<VisualElement>("footer");
+
+        if (_settingsButton == null)
+        {
+            _LOGGER.LogWarning("Settings button 'settings-button' not found in UXML - skipping wiring.");
+            return;
+        }
+
+        _settingsOpen = false;
+        ApplySettingsView();
+        _settingsButton.RegisterCallback<ClickEvent>(evt =>
+        {
+            _settingsOpen = !_settingsOpen;
+            ApplySettingsView();
+        });
+    }
+
+    // Reflects _settingsOpen onto the header button's checked class and the main/settings panels. Each
+    // element is null-guarded independently so a partially-authored UXML degrades gracefully.
+    private void ApplySettingsView()
+    {
+        if (_settingsButtonBackground != null)
+        {
+            if (_settingsOpen)
+                _settingsButtonBackground.AddToClassList(SettingsButtonCheckedClass);
+            else
+                _settingsButtonBackground.RemoveFromClassList(SettingsButtonCheckedClass);
+        }
+
+        if (_upperContainer != null)
+            _upperContainer.style.display = _settingsOpen ? DisplayStyle.None : DisplayStyle.Flex;
+        if (_middleContainer != null)
+            _middleContainer.style.display = _settingsOpen ? DisplayStyle.None : DisplayStyle.Flex;
+        if (_footer != null)
+            _footer.style.display = _settingsOpen ? DisplayStyle.None : DisplayStyle.Flex;
+        if (_settingsContainer != null)
+            _settingsContainer.style.display = _settingsOpen ? DisplayStyle.Flex : DisplayStyle.None;
+    }
 
     private void OnXToggleClicked(ClickEvent evt)
     {

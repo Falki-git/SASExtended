@@ -32,7 +32,8 @@ Design north star is feature parity with KSP1 MechJeb2's "Smart A.S.S." module �
 | Path | Role |
 |------|------|
 | `Code/SASExtendedPlugin.cs` | Mod entry point. Binds config (`Settings.Initialize()`), registers the custom UITK control factories (reflection-based `VisualElementFactoryRegistry.RegisterFactory` — see `custom_uxml_controls.md`), loads the window UXML + appbar icon via `Assets.LoadAssetAsync<T>(key).WaitForCompletion()`, spawns the `SASManager` MonoBehaviour, applies Harmony patches, and hides/restores the window on flight-scene enter/exit (`GameStateChangedMessage`). |
-| `Code/Managers/SASManager.cs` | **Core control loop.** A `MonoBehaviour` that every `Update()` computes a target `Rotation` for the active `AttitudeMode` and commands it via `SAS.LockRotation`; also drives Hover's throttle. See "How KSP2 SAS works" and "Offset math" below. |
+| `Code/Managers/SASManager.cs` | **Core control loop.** A `MonoBehaviour` that every `Update()` computes a target `Rotation` for the active `AttitudeMode` and commands it via `SAS.LockRotation`; also drives Hover's throttle. See "How KSP2 SAS works" and "Offset math" below. Exposes `IsEngaged` and `CommandedRotation` (the slew-limited setpoint) for the Flight Axes visuals. |
+| `Code/Managers/FlightAxesVisualizer.cs` | **In-world flight-axis visuals** — split control axes (fwd/up/right), commanded/target attitude arrows, orbital (prograde/normal/radial-in), surface & horizontal velocity arrows, CoM marker — toggled from the settings panel. Data-driven arrow registry (`_arrowSpecs`/`SetVisual`/`ToggleIds`). Reuses the game's own debug-shape components/prefabs. See "Flight Axes visuals" below. |
 | `Code/PureMath/{AttitudeMath,HoverThrottleMath}.cs` | Pure quaternion/control-law math extracted out of `SASManager`, free of KSP.Sim's frame-aware types, so it can be exercised by edit-mode unit tests instead of only in-game. Change the *math* here; keep `SASManager` as the thin glue that feeds it live telemetry. |
 | `Tests/EditMode/{AttitudeMathTests,HoverThrottleMathTests}.cs` | Unity Test Framework edit-mode tests for the above. Run from Unity's Test Runner window. |
 | `Code/Models/AttitudeMode.cs` | Enum of every mode (see full list below). |
@@ -101,8 +102,10 @@ checked in).
 A single flight window (UXML + USS), styled like the stock KSP2 panels, opened via a Flight
 appbar toggle button. Layout, top → bottom:
 
-- **Header:** title "SAS EXTENDED" + close button. Draggable window; position persists across
-  sessions (`Settings.WindowPositionX/Y`).
+- **Header:** title "SAS EXTENDED" + a **settings button** (`#settings-button`) + close button.
+  Draggable window; position persists across sessions (`Settings.WindowPositionX/Y`). The settings
+  button swaps the window body between the normal SAS view and the Flight Axes settings panel — see
+  "Flight Axes visuals" below.
 - **Status line:** a single readout under the header, refreshed on `Settings.StatusRefreshInterval`
   (default 0.2s, disable via `Settings.StatusLoggingEnabled`). Content depends on mode: KillRot
   shows angular velocity, Hover shows vertical/horizontal speed (or throttle % if horizontal-vel
@@ -144,6 +147,104 @@ across every pointing mode via one `LockRotation` per tick:
   2 DOF and leaves roll uncontrolled).
 - `Hover` only ever exposes **Roll** to this mechanism — heading/pitch are pinned to the thrust
   direction and aren't user-configurable there.
+
+## Flight Axes visuals (settings panel)
+
+Optional in-world debug-style arrows/markers for the active vessel, toggled from a **settings panel**
+reached via the header `#settings-button`. Modelled on Redux's own stock *Vessel Tools → Flight Axes*
+debug feature — **we reuse the game's own debug-shape components and prefabs rather than rendering our
+own**, so the visuals match the stock look for free. (To re-derive the reference implementation:
+`ilspycmd -t DebugTools.Runtime.Controllers.VesselTools.VesselToolsWindowController "<Assembly-CSharp.dll>"`
+plus the `DebugShapes*` component classes.)
+
+**Rendering stack (all public in `Assembly-CSharp.dll`; `ShapesRuntime.dll` ships with the game and is
+already in the asmdef):**
+- `DebugShapesArrowComponent` — one arrow (`Shapes.Line` + `Shapes.Cone`); public `color`/`lineLength`.
+- `DebugShapesAxesComponent` — three of the above as an RGB gizmo (`forward`/`up`/`right`).
+- `DebugShapesObjectTracker` — the engine: each frame fires `OnUpdate(ITransformModel, SimulationObjectModel)`;
+  our callback writes a sim-space position + rotation, then it maps sim→Unity world via
+  `PhysicsSpace.PositionToPhysics/RotationToPhysics` and applies a `RotationOffset`.
+- `DebugTools.Utils.DebugShapesSphereMarker` — wraps `DebugShapesDraw.Sphere` (the yellow CoM ball).
+- Prefabs loaded by addressable key via `GameManager.Instance.Assets.Load<GameObject>(...)`:
+  `Assets/Modules/DebugTools/Assets/DebugArrow.prefab` and `.../DebugAxes.prefab`.
+
+**`FlightAxesVisualizer`** (a `MonoBehaviour` singleton on the same `SASExtended_Providers` object as
+`SASManager`) owns all the visuals. It visualizes **only the active vessel**, rebuilding its instances
+whenever the active vessel changes (switch/undock/revert) or flight is left/re-entered — each tick's
+active vessel is compared against `_builtVessel`. The on/off flags persist across those rebuilds, so a
+visual left on before a vessel switch comes back on the new vessel. Prefabs load async at startup; the
+load callbacks re-run `RebuildForCurrentVessel` in case a toggle was flipped on before they arrived
+(`Create*` no-op while their prefab is null; the CoM marker needs no prefab).
+
+**Data-driven arrow registry.** Most visuals are plain direction/attitude arrows, so rather than a
+copy-pasted block each, they live in a static `_arrowSpecs` dictionary keyed by toggle id — each spec is
+`{ Color, Length, RequiresEngaged, AnchorAtCoM, TrackerSuffix, Func<VesselComponent, TelemetryComponent,
+Rotation> }`. `CreateArrow`/`DestroyArrow` handle any of them generically (one closure captures the spec
+and is stored on the live instance so it can be unsubscribed). The public entry point is
+`SetVisual(string id, bool on)`; `ToggleIds` is the canonical id list the UI iterates. **Adding a new
+arrow = one `_arrowSpecs` entry + its id in `ToggleIds`** (UI wiring and lifecycle are automatic).
+Control axes and the CoM marker are the two special cases `SetVisual` dispatches outside the registry.
+
+The visuals (currently implemented; **CoT/CoL deliberately deferred**, since `VesselComponent` exposes
+`CenterOfMass` as one public field but has no thrust/lift-center equivalent):
+
+| Toggle (`SideToggleControl`) | Visual | Source |
+|---|---|---|
+| `show-control-forward` / `-up` / `-right` | The vessel's **current** orientation, navball-aligned, split into three separately-toggleable 2m arrows: forward=blue, nose/up=white, right=red. One shared stock axes gizmo; each toggle enables/disables the prefab's own child arrow (so per-axis directions are exactly the game's). Anchored at the control point. | `vessel.ControlTransform.Position/Rotation` |
+| `show-commanded-attitude` | **Orange arrow** (3m) along the nose direction SAS Extended is steering toward *right now*; hidden while OFF, lines up with the up/white control arrow when on target | `SASManager.CommandedRotation`, `RequiresEngaged` |
+| `show-target-attitude` | **Violet arrow** (4m) along the mode's raw *final* target, before slew limiting; diverges from the commanded arrow during a reorientation and coincides once settled; hidden while OFF | `SASManager.TargetRotation`, `RequiresEngaged` |
+| `show-orbital-prograde` | **Green arrow** (3m) from CoM along orbital prograde | `LookRotation(OrbitMovementNormal, OrbitMovementPrograde)` |
+| `show-orbital-normal` | **Magenta arrow** (3m) from CoM along orbital normal | `LookRotation(OrbitMovementRetrograde, OrbitMovementNormal)` |
+| `show-orbital-radial-in` | **Cyan arrow** (3m) from CoM along orbital radial-in | `LookRotation(OrbitMovementPrograde, OrbitMovementRadialIn)` |
+| `show-surface-velocity` | **Gray arrow** (2.5m) from CoM along surface velocity | `LookRotation(cross(vel, HorizonUp), vel)` — perpendicular hint (see below) |
+| `show-horizontal-velocity` | **Brown arrow** (2.5m) from CoM along the horizontal (radial-projected-out) component of surface velocity | `SurfaceMovementVelocity` minus its `HorizonUp` component |
+| `show-com-marker` | Yellow sphere at center of mass | `vessel.CenterOfMass`, driven each frame |
+
+Colors are all distinct (navball convention for the orbital arrows: prograde green, normal magenta,
+radial-in cyan). For the attitude arrows the nested lengths (control 2m → commanded 3m → target 4m) tell
+the reorientation story at a glance: target jumps to the goal, commanded slews toward it, the control
+gizmo (real vessel) trails — all collapsing together once settled.
+
+- **Navball offset trick:** the tracker renders `transform.rotation = physicsRotation * RotationOffset`
+  with `RotationOffset = Euler(-90,0,0)`. That makes the arrow prefab's local +Z follow the fed
+  `Rotation`'s **"up" (+Y) axis**, so (a) a full vessel-attitude `Rotation` fed straight in points along
+  the nose (commanded/target), and (b) any direction `D` is drawn via `Rotation.LookRotation(hint, D)`.
+  - **Gotcha (caused a real bug):** `LookRotation(forward, up)` sets +Z=`forward` *exactly* and
+    +Y=`up` only *projected perpendicular to forward*. So the arrow points exactly along `D` **only when
+    `hint` ⟂ `D`.** The orbital arrows satisfy this for free (two axes of the same orthonormal orbital
+    frame) and the horizontal-velocity arrow does by construction (its direction is already ⟂ HorizonUp).
+    Surface velocity originally used `OrbitMovementNormal` as the hint (as the stock debug tool does),
+    which is *not* ⟂ the surface-velocity direction — skewing the arrow badly (most visible moving
+    horizontally with ~0 vertical speed). Fixed by synthesizing a perpendicular hint via
+    `cross(vel, HorizonUp)` (fallback `cross(vel, HorizonNorth)` when velocity is ~vertical).
+- **Commanded vs. target arrow** — commanded feeds `CommandedRotation` (the *slew-limited* setpoint
+  actually handed to `SAS.LockRotation`, i.e. what the autopilot is told to hold this tick); target
+  feeds `TargetRotation` (`_rotation`, the mode's raw final goal before slew limiting). They only differ
+  mid-reorientation.
+- **Per-frame visibility gating** (`ComputeArrowVisible`, driven from the always-running `Update` loop —
+  *not* an arrow's own handler, since a deactivated GameObject stops updating itself and could never
+  re-show):
+  - **`RequiresEngaged`** arrows (commanded/target) are hidden while SAS Extended is OFF — their source
+    `Rotation` is stale otherwise.
+  - **Velocity arrows** have a `Visible` speed gate (`MinVelocityArrowSpeed`, 0.05 m/s — a low noise
+    floor so the arrow stays useful while nulling velocity for a precise landing): a near-zero
+    velocity normalizes to an essentially random direction, so surface/horizontal arrows hide themselves
+    at rest (e.g. a landed vessel — gear-spring jitter) rather than pointing at noise. Horizontal gates
+    on the *horizontal* speed specifically, so a straight-down descent (real surface speed, ~no
+    horizontal component) still hides it.
+  - Arrows are hidden by deactivating the GameObject (not destroyed), so the condition reversing brings
+    them straight back.
+
+**Settings panel wiring (`MainWindowController`):** the toggles are **independent** on/off toggles (NOT
+part of the mutually-exclusive `_allModeToggles` mode set — `ClearAllModeToggles`/
+`OnSasManagerDisengaged` never touch them), wired in one loop over `FlightAxesVisualizer.ToggleIds`
+(`WireFlightAxesToggles`) — each toggle's element name *is* its visual id. The header
+`#settings-button` (`WireSettingsButton`/`ApplySettingsView`) swaps the body: when open it adds
+`settings-button__background--checked` to `#settings-button__background`, sets `#upper-container`,
+`#middle-container`, and `#footer` to `DisplayStyle.None`, and `#settings-container` to `Flex`; clicking
+again reverses it. Every queried element is **null-guarded** so the window still builds while this UXML is being
+authored. Toggle/panel states are **session-only** (not persisted to `Settings`) and reset to
+off/main-view when the window is first created.
 
 ## Hover mode (SPEC → Hov) — throttle control
 
@@ -251,6 +352,18 @@ SURF (all 6); TGT (all 6, including PAR against a docking port); SPEC Star+/−,
 offset memory, window position/open-state persistence, the status readout, SAS mode color coding,
 and auto-disengage on vessel change / lost node-target / external stock-SAS toggle are all
 implemented and working.
+
+**Flight Axes visuals — implemented, pending in-game verification.** The full set — split control axes
+(fwd/up/right), commanded/target attitude arrows, orbital prograde/normal/radial-in, surface &
+horizontal velocity arrows, and the CoM marker (`FlightAxesVisualizer`) — plus the
+settings-panel/settings-button wiring is written but not yet built/run. Confirm on the next build:
+(1) the two stock debug prefabs actually load from a mod context (internal debug assets — watch for
+`logMissingKey` warnings in `Player.log`; CoM needs no prefab so it works regardless); (2) the attitude
+arrows point along the nose as derived (engage e.g. Prograde + a Heading offset: the violet target arrow
+jumps to the goal while the orange commanded arrow slews onto the white up/control arrow); (3) the direction
+arrows point the right way (prograde/normal/radial-in/surface-velocity against the navball). The
+settings-panel UXML (`#settings-container`, `#settings-button`, and the eleven `show-*` toggles in
+`FlightAxesVisualizer.ToggleIds`) is authored by the user, not shipped in this codebase yet.
 
 Build-constraint reminder: the Unity asmdef compiles at **C# 9.0** (Unity 6000.4.1f1) — no
 file-scoped namespaces, no `with` on structs. See [[langversion-csharp9]].
