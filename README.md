@@ -1,4 +1,4 @@
-# SAS Extended
+# SAS Extended - a KSP2 plugin
 
 **A precision flight-control mod for Kerbal Space Program 2** that turns the game's stock
 Stability Assist System into a full six-axis attitude autopilot — with fine-grained orientation
