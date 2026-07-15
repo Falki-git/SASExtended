@@ -52,6 +52,10 @@ public class LandingPredictionManager : MonoBehaviour
     private const int SearchSteps = 100;
     private const int MarchSteps = 200;
     private const int TrajectorySampleCount = MarchSteps + 1;
+    // Bisection refinement of the final impact point within the bracketing pair of samples found
+    // by MarchToImpact - see the call site for why a single linear-interpolation guess isn't
+    // enough. 20 halvings shrinks the bracket by ~2^20, far finer than the visual marker's size.
+    private const int ImpactBisectionIterations = 20;
 
     private const float LineWidthMeters = 0.6f;
     private const float MarkerRadiusMeters = 5f;
@@ -374,11 +378,41 @@ public class LandingPredictionManager : MonoBehaviour
             double alt = AltitudeAt(body, frame, derotated);
             if (alt <= 0.0)
             {
-                // Linear interpolation between the last two samples - good enough for a visual
-                // marker, and avoids re-integrating for a bisection refinement.
-                double frac = prevAlt / (prevAlt - alt);
-                impactOffset = Vector3d.Lerp(prevOffset, offset, frac);
-                impactSpan = (i - 1 + frac) * dt;
+                // The straight-line segment between the last two samples is a fine approximation
+                // of the true (continuous) path over such a short RK4 step, but terrain height is
+                // NOT guaranteed to vary linearly along it - a boulder or ridge crossed between
+                // the two samples (common on rubbly/asteroid-like terrain, and more likely the
+                // faster the vessel's horizontal speed, since each step then covers more ground)
+                // can make a single-shot linear-interpolation guess land the "impact" point on the
+                // far side of that feature, embedded underground, instead of right at its surface.
+                // Bisect along the segment instead, re-querying the actual terrain altitude at
+                // each candidate, so the final point converges onto wherever the surface actually
+                // is regardless of how it varies between the two samples.
+                Vector3d hiOffset = offset;
+                double loAlt = prevAlt, hiAlt = alt;
+                double loFrac = 0.0, hiFrac = 1.0;
+                for (int bisect = 0; bisect < ImpactBisectionIterations; bisect++)
+                {
+                    double frac = loFrac + (hiFrac - loFrac) * (loAlt / (loAlt - hiAlt));
+                    frac = Math.Min(Math.Max(frac, loFrac + 1e-6), hiFrac - 1e-6);
+                    Vector3d candidateOffset = Vector3d.Lerp(prevOffset, offset, frac);
+                    double candidateAlt = AltitudeAt(body, frame, startPos + candidateOffset);
+                    if (candidateAlt > 0.0)
+                    {
+                        loAlt = candidateAlt;
+                        loFrac = frac;
+                    }
+                    else
+                    {
+                        hiOffset = candidateOffset;
+                        hiAlt = candidateAlt;
+                        hiFrac = frac;
+                    }
+                }
+                // The hi side is always at-or-under the surface, so ending there (rather than the
+                // midpoint) never renders the marker floating visibly above the ground.
+                impactOffset = hiOffset;
+                impactSpan = (i - 1 + hiFrac) * dt;
                 return true;
             }
 
