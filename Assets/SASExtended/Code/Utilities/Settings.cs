@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using ReduxLib.Configuration;
 using SASExtended.Models;
+using UnityEngine;
 
 namespace SASExtended.Utilities
 {
@@ -63,6 +64,8 @@ namespace SASExtended.Utilities
         // "Landing prediction" section
         public static ConfigValue<bool> ShowLandingPrediction;
         public static ConfigValue<float> LandingPredictionRefreshInterval;
+        public static ConfigValue<Color> LandingPredictionLineColor;
+        public static ConfigValue<Color> LandingPredictionMarkerColor;
 
         // "Diagnostics" section
         public static ConfigValue<bool> VerboseLoggingEnabled;
@@ -163,6 +166,20 @@ namespace SASExtended.Utilities
                 "How often (in seconds) the landing prediction trajectory/impact point is recomputed. " +
                 "Lower values track a changing trajectory more closely at the cost of more frequent searches.",
                 new RangeConstraint<float>(0.01f, 2f)
+                ));
+
+            LandingPredictionLineColor = new(Plugin.SWConfiguration.Bind(
+                "Landing prediction",
+                "Trajectory line color",
+                Color.red,
+                "Color of the predicted trajectory line."
+                ));
+
+            LandingPredictionMarkerColor = new(Plugin.SWConfiguration.Bind(
+                "Landing prediction",
+                "Impact marker color",
+                new Color(0.2f, 0.6f, 1f),
+                "Color of the predicted impact marker."
                 ));
 
             // DIAGNOSTICS

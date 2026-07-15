@@ -1,12 +1,13 @@
 using System;
-using DebugTools.Utils;
 using KSP.Api;
 using KSP.Game;
 using KSP.Rendering;
 using KSP.Sim;
 using KSP.Sim.impl;
 using SASExtended.Utilities;
+using Shapes;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace SASExtended.Managers
 {
@@ -65,8 +66,10 @@ public class LandingPredictionManager : MonoBehaviour
     // width to whatever world size subtends this many screen pixels at that vertex's distance
     // (a little over the literal 1px floor requested, as a safety margin against AA/rounding).
     private const float MinLineWidthPixels = 1.5f;
-    private static readonly Color TrajectoryColor = Color.red;
-    private static readonly Color MarkerColor = new Color(0.2f, 0.6f, 1f);
+    // Ring/crosshair line thickness for the impact marker reticle - see ReticleMarker.
+    private const float MarkerLineThicknessMeters = 0.4f;
+    // Colors are read from Settings every frame (not cached) so an in-game settings-page change
+    // via the color picker takes effect immediately, without needing visuals to be torn down.
 
     private bool _enabled;
     private float _nextComputeTime;
@@ -90,6 +93,11 @@ public class LandingPredictionManager : MonoBehaviour
     // rather than reallocated/resized down to the exact count.
     private int _trajectorySampleCount;
     private Vector3d _impactOffset;
+    // Body-local outward surface normal at the impact point (from CelestialBodyComponent.
+    // GetSurfaceNVector), used only to lay the impact reticle flat against the ground instead of
+    // in some arbitrary/world-aligned orientation. Same recompute-throttled/every-frame-converted
+    // treatment as _impactOffset, for the same reason (see the field comment above).
+    private Vector3d _impactNormal;
     private ICoordinateSystem _predictionFrame;
 
     private GameObject _lineGo;
@@ -98,11 +106,7 @@ public class LandingPredictionManager : MonoBehaviour
     private Vector3[] _linePositionsBuffer;
 
     private GameObject _markerGo;
-    private DebugShapesSphereMarker _marker;
-    // The sphere shape component is created lazily by DebugShapesSphereMarker's own Start(), so
-    // it isn't available the same frame the marker GameObject is created - resolved and colored
-    // once it appears.
-    private DebugShapesDraw.Sphere _markerSphere;
+    private ReticleMarker _marker;
 
     private static VesselComponent ActiveVessel =>
         GameManager.Instance?.Game?.ViewController?.GetActiveSimVessel();
@@ -314,13 +318,14 @@ public class LandingPredictionManager : MonoBehaviour
         _impactOffset = impactOffset;
         _predictionFrame = frame;
 
+        Vector3d impactPos = startPos + impactOffset;
+        body.GetLatLonAltFromRadius(new Position(frame, impactPos), out var impactLat, out var impactLon, out _);
+        _impactNormal = body.GetSurfaceNVector(impactLat, impactLon);
+
         _hasValidPrediction = true;
 
         if (Settings.VerboseLoggingEnabled.Value)
         {
-            Vector3d impactPos = startPos + impactOffset;
-            body.GetLatLonAltFromRadius(new Position(frame, impactPos), out var lat, out var lon, out _);
-
             // lat/lon (2 decimals) can't resolve meter-scale wobble on a 600km-radius body -
             // log the raw local-frame numbers instead so a repeat of this can pin down whether
             // the *input* (startVel) or the *computation* (impactPos) is what's actually moving.
@@ -330,7 +335,7 @@ public class LandingPredictionManager : MonoBehaviour
             Vector3d horizVelVec = startVel - up * vertVel;
 
             _LOGGER.LogDebug(
-                $"Landing prediction: impact in ~{impactSpan:F1}s at lat={lat:F2} lon={lon:F2}, " +
+                $"Landing prediction: impact in ~{impactSpan:F1}s at lat={impactLat:F2} lon={impactLon:F2}, " +
                 $"horizOffset={horizontalDelta.magnitude:F2}m, startVel(vert={vertVel * 1000.0:F1}mm/s, " +
                 $"horiz={horizVelVec.magnitude * 1000.0:F1}mm/s), bodyRotationPeriod={(omegaMag > 0.0 ? 2.0 * Math.PI / omegaMag : 0.0):F0}s.");
         }
@@ -531,16 +536,18 @@ public class LandingPredictionManager : MonoBehaviour
         // keyframe per vertex gives an exact per-vertex width just like SetWidths would.
         _line.widthMultiplier = 1f;
         _line.widthCurve = new AnimationCurve(widthKeys);
+        // Read every frame (not cached) so a color-picker change in the settings menu applies
+        // immediately - see the field comment above the (now-removed) color constants.
+        var lineColor = Settings.LandingPredictionLineColor.Value;
+        _line.startColor = lineColor;
+        _line.endColor = lineColor;
+        _lineMaterial.color = lineColor;
 
         Vector3d impactOffsetWorld = physics.VectorToPhysics(new Vector(_predictionFrame, _impactOffset));
-        _marker.SetCenter(vesselWorldNow + impactOffsetWorld);
-
-        if (_markerSphere == null && _markerGo != null)
-        {
-            _markerSphere = _markerGo.GetComponent<DebugShapesDraw.Sphere>();
-            if (_markerSphere != null)
-                _markerSphere.color = MarkerColor;
-        }
+        Vector3d impactNormalWorld = physics.VectorToPhysics(new Vector(_predictionFrame, _impactNormal));
+        _marker.Center = vesselWorldNow + impactOffsetWorld;
+        _marker.Normal = ((Vector3)impactNormalWorld).normalized;
+        _marker.Color = Settings.LandingPredictionMarkerColor.Value;
     }
 
     private void CreateVisuals()
@@ -552,11 +559,9 @@ public class LandingPredictionManager : MonoBehaviour
 
             _line = _lineGo.AddComponent<LineRenderer>();
             _line.useWorldSpace = true;
-            // Per-vertex widths are set every frame in UpdateVisualPositions (see
-            // MinLineWidthPixels) - no need for a static start/end width here.
-            _line.material = CreateOverlayMaterial(TrajectoryColor, out _lineMaterial);
-            _line.startColor = TrajectoryColor;
-            _line.endColor = TrajectoryColor;
+            // Per-vertex widths and color are set every frame in UpdateVisualPositions - no need
+            // for static start/end values here.
+            _line.material = CreateOverlayMaterial(Settings.LandingPredictionLineColor.Value, out _lineMaterial);
 
             _linePositionsBuffer = new Vector3[TrajectorySampleCount];
         }
@@ -565,9 +570,44 @@ public class LandingPredictionManager : MonoBehaviour
         {
             _markerGo = new GameObject("SASX_LandingMarker");
             _markerGo.transform.parent = transform;
-            _marker = _markerGo.AddComponent<DebugShapesSphereMarker>();
-            _marker.SetEnabled(true);
-            _marker.SetRadius(MarkerRadiusMeters);
+            _marker = _markerGo.AddComponent<ReticleMarker>();
+            _marker.Radius = MarkerRadiusMeters;
+            _marker.LineThickness = MarkerLineThicknessMeters;
+        }
+    }
+
+    // Draws the impact marker as a flat crosshair-in-circle reticle laid against the ground
+    // (oriented to the local terrain normal), using the Shapes library's immediate-mode API
+    // directly - the same one the game's own DebugShapesDraw wraps for the sphere/line/cuboid
+    // primitives it exposes, none of which fit a flat ground reticle. Kept as its own component
+    // (rather than nested drawing calls in UpdateVisualPositions) because Shapes draws are only
+    // valid from within a Camera.onPreRender callback, which KerbalImmediateModeShapeDrawer
+    // (the game's own base class for this) already wires up.
+    private class ReticleMarker : KerbalImmediateModeShapeDrawer
+    {
+        public Vector3 Center { get; set; }
+        public Vector3 Normal { get; set; } = Vector3.up;
+        public float Radius { get; set; } = 5f;
+        public float LineThickness { get; set; } = 0.4f;
+        public Color Color { get; set; } = Color.white;
+
+        public override void DrawShapes(Camera cam)
+        {
+            using (Draw.Command(cam))
+            {
+                Draw.ZTest = CompareFunction.Always;
+                Draw.BlendMode = ShapesBlendMode.Additive;
+                Draw.ThicknessSpace = ThicknessSpace.Meters;
+                Draw.Ring(Center, Normal, Radius, LineThickness, Color);
+
+                // Arbitrary (but stable frame-to-frame) in-plane basis perpendicular to Normal -
+                // a crosshair reads the same regardless of which way it's rotated about Normal.
+                var rot = Quaternion.FromToRotation(Vector3.up, Normal);
+                Vector3 tangent = rot * Vector3.right;
+                Vector3 bitangent = rot * Vector3.forward;
+                Draw.Line(Center - tangent * Radius, Center + tangent * Radius, LineThickness, LineEndCap.None, Color);
+                Draw.Line(Center - bitangent * Radius, Center + bitangent * Radius, LineThickness, LineEndCap.None, Color);
+            }
         }
     }
 
@@ -612,7 +652,6 @@ public class LandingPredictionManager : MonoBehaviour
             Destroy(_markerGo);
         _markerGo = null;
         _marker = null;
-        _markerSphere = null;
 
         _hasValidPrediction = false;
     }
