@@ -2,6 +2,7 @@ using System;
 using DebugTools.Utils;
 using KSP.Api;
 using KSP.Game;
+using KSP.Rendering;
 using KSP.Sim;
 using KSP.Sim.impl;
 using SASExtended.Utilities;
@@ -54,6 +55,13 @@ public class LandingPredictionManager : MonoBehaviour
 
     private const float LineWidthMeters = 0.6f;
     private const float MarkerRadiusMeters = 5f;
+    // The line's world-space width naturally reads as thinner the farther a point is from the
+    // camera (perspective) - desirable, since it reads as "receding into the distance." But a
+    // fixed world-space width can shrink below what the GPU rasterizes at all once a point gets
+    // far enough away, making the line vanish rather than just look thin. Floor each vertex's
+    // width to whatever world size subtends this many screen pixels at that vertex's distance
+    // (a little over the literal 1px floor requested, as a safety margin against AA/rounding).
+    private const float MinLineWidthPixels = 1.5f;
     private static readonly Color TrajectoryColor = Color.red;
     private static readonly Color MarkerColor = new Color(0.2f, 0.6f, 1f);
 
@@ -101,6 +109,13 @@ public class LandingPredictionManager : MonoBehaviour
 
     private static bool InFlightView =>
         GameManager.Instance?.Game?.GlobalGameState?.GetState() == GameState.FlightView;
+
+    // Same physics-space flight camera the game itself renders through - used only to floor the
+    // line's per-vertex width against how many world units a pixel covers at that distance.
+    private static Camera FlightCamera =>
+        GameManager.Instance?.Game?.CameraManager
+            ?.GetCameraRenderStack(CameraID.Flight, RenderSpaceType.PhysicsSpace)
+            ?.GetMainRenderCamera();
 
     private void Awake()
     {
@@ -221,7 +236,17 @@ public class LandingPredictionManager : MonoBehaviour
         if (!(horizon > 0.0) || double.IsInfinity(horizon))
             horizon = 6.0 * 3600.0;
         double upperUt = now + horizon;
-        if (orbit.EndUT > now && orbit.EndUT < upperUt)
+        // orbit.EndUT is the game's OWN patched-conic solution boundary. When that boundary is a
+        // Collision transition, PatchedConics.WillCollideWithParent computed it by bisecting
+        // orbit.GetRelativePositionAtUT for a terrain crossing - the exact same analytic
+        // Kepler-anomaly reconstruction already shown (see the horizon comment above) to be
+        // unreliable in this predictor's near-radial regime. Trusting it here clipped the search
+        // horizon short of the real RK4-computed impact time on longer/higher falls, which is why
+        // the whole prediction would intermittently vanish above a few thousand meters (the coarse
+        // pass found "no crossing" before ever reaching the true one). Still respect EndUT for
+        // transitions our own single-body integrator can't model anyway (SOI encounter/escape) -
+        // just never for the game's own (unreliable) collision guess.
+        if (orbit.PatchEndTransition != PatchTransitionType.Collision && orbit.EndUT > now && orbit.EndUT < upperUt)
             upperUt = orbit.EndUT;
         if (upperUt <= now)
             return;
@@ -451,13 +476,28 @@ public class LandingPredictionManager : MonoBehaviour
         // unaffected by whatever origin-tracking difference caused the drift.
         Vector3d vesselWorldNow = physics.PositionToPhysics(new Position(_predictionFrame, orbit.localPosition));
 
+        var cam = FlightCamera;
+        Vector3 camPos = cam != null ? cam.transform.position : Vector3.zero;
+
+        var widthKeys = new Keyframe[_trajectorySampleCount];
         for (int i = 0; i < _trajectorySampleCount; i++)
         {
             Vector3d offsetWorld = physics.VectorToPhysics(new Vector(_predictionFrame, _sampleOffsets[i]));
-            _linePositionsBuffer[i] = vesselWorldNow + offsetWorld;
+            Vector3 point = vesselWorldNow + offsetWorld;
+            _linePositionsBuffer[i] = point;
+            float width = cam != null
+                ? Mathf.Max(LineWidthMeters, PixelWorldSize(cam, camPos, point) * MinLineWidthPixels)
+                : LineWidthMeters;
+            float t = _trajectorySampleCount > 1 ? (float)i / (_trajectorySampleCount - 1) : 0f;
+            widthKeys[i] = new Keyframe(t, width);
         }
         _line.positionCount = _trajectorySampleCount;
         _line.SetPositions(_linePositionsBuffer);
+        // LineRenderer has no per-vertex SetWidths in this Unity version - widthCurve is sampled
+        // at each vertex's normalized position (0 at the first vertex, 1 at the last), so one
+        // keyframe per vertex gives an exact per-vertex width just like SetWidths would.
+        _line.widthMultiplier = 1f;
+        _line.widthCurve = new AnimationCurve(widthKeys);
 
         Vector3d impactOffsetWorld = physics.VectorToPhysics(new Vector(_predictionFrame, _impactOffset));
         _marker.SetCenter(vesselWorldNow + impactOffsetWorld);
@@ -479,8 +519,8 @@ public class LandingPredictionManager : MonoBehaviour
 
             _line = _lineGo.AddComponent<LineRenderer>();
             _line.useWorldSpace = true;
-            _line.startWidth = LineWidthMeters;
-            _line.endWidth = LineWidthMeters;
+            // Per-vertex widths are set every frame in UpdateVisualPositions (see
+            // MinLineWidthPixels) - no need for a static start/end width here.
             _line.material = CreateOverlayMaterial(TrajectoryColor, out _lineMaterial);
             _line.startColor = TrajectoryColor;
             _line.endColor = TrajectoryColor;
@@ -496,6 +536,20 @@ public class LandingPredictionManager : MonoBehaviour
             _marker.SetEnabled(true);
             _marker.SetRadius(MarkerRadiusMeters);
         }
+    }
+
+    // World-space size (in meters) that one screen pixel covers at `point`, for the given camera.
+    // Multiplying by a pixel count gives the minimum line width that still rasterizes at that
+    // distance - see MinLineWidthPixels.
+    private static float PixelWorldSize(Camera cam, Vector3 camPos, Vector3 point)
+    {
+        int screenHeight = Mathf.Max(1, Screen.height);
+        if (cam.orthographic)
+            return cam.orthographicSize * 2f / screenHeight;
+
+        float distance = Vector3.Distance(camPos, point);
+        float worldHeightAtDistance = 2f * distance * Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad);
+        return worldHeightAtDistance / screenHeight;
     }
 
     // Always-on-top recipe (no depth occlusion/horizon culling - see the plan) confirmed already
