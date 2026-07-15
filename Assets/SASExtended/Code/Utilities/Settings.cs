@@ -62,6 +62,7 @@ namespace SASExtended.Utilities
 
         // "Landing prediction" section
         public static ConfigValue<bool> ShowLandingPrediction;
+        public static ConfigValue<float> LandingPredictionRefreshInterval;
 
         // "Diagnostics" section
         public static ConfigValue<bool> VerboseLoggingEnabled;
@@ -153,6 +154,15 @@ namespace SASExtended.Utilities
                 "Show landing predictions",
                 false,
                 "Show a predicted coast trajectory and ground impact marker in flight (airless bodies only)."
+                ));
+
+            LandingPredictionRefreshInterval = new(Plugin.SWConfiguration.Bind(
+                "Landing prediction",
+                "Refresh interval (sec)",
+                0.1f,
+                "How often (in seconds) the landing prediction trajectory/impact point is recomputed. " +
+                "Lower values track a changing trajectory more closely at the cost of more frequent searches.",
+                new RangeConstraint<float>(0.01f, 2f)
                 ));
 
             // DIAGNOSTICS

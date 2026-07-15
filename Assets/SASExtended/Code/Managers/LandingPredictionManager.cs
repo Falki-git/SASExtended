@@ -41,8 +41,7 @@ public class LandingPredictionManager : MonoBehaviour
     // Recompute (impact search + trajectory sampling) is throttled - it's a few hundred orbit
     // samples plus a bisection, not something to redo every frame. Marker/line positions are
     // still re-projected every frame in UpdateVisualPositions (cheap, and required for the
-    // floating origin).
-    private const float ComputeIntervalSeconds = 0.2f;
+    // floating origin). User-configurable via Settings.LandingPredictionRefreshInterval.
 
     // Two-pass search: a coarse pass (over the full orbital-period-scale horizon) just brackets
     // roughly when the terrain crossing happens, then a fine pass re-integrates from scratch with
@@ -154,7 +153,7 @@ public class LandingPredictionManager : MonoBehaviour
 
         if (Time.time >= _nextComputeTime)
         {
-            _nextComputeTime = Time.time + ComputeIntervalSeconds;
+            _nextComputeTime = Time.time + Settings.LandingPredictionRefreshInterval.Value;
             RecomputeTrajectory();
         }
 
