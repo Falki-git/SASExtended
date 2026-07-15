@@ -111,7 +111,9 @@
             <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="NODE" IsEnabled="true" name="node"/>
         </ui:VisualElement>
         <ui:VisualElement name="settings-container" style="flex-grow: 1; display: flex;">
-            <ui:Label text="Show Direction Axes" name="" style="font-size: 10px;"/>
+            <ui:Label text="Landing predictions" name="" style="font-size: 10px;"/>
+            <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="SHOW LANDING PREDICTION" IsEnabled="true" IsBig="false" name="show-landing-prediction" IsSmall="true" IsLong="true"/>
+            <ui:Label text="Show Direction Axes" name="" style="font-size: 10px; margin-top: 10px;"/>
             <ui:VisualElement name="control-axes" style="flex-grow: 0; flex-direction: row; width: 100%; height: 20px;">
                 <ui:Label text="Control" name="" style="font-size: 10px; width: 55px;"/>
                 <SASExtended.UI.Controls.SideToggleControl focusable="true" Text="FWD" IsEnabled="true" IsBig="false" name="show-control-forward" IsSmall="true" IsLong="false" class="led-control-forward" style="width: 40px;"/>

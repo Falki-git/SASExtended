@@ -60,6 +60,9 @@ namespace SASExtended.Utilities
         public static ConfigValue<float> SurfaceSurfDefaultPitch;
         public static ConfigValue<float> SurfaceSurfDefaultRoll;
 
+        // "Landing prediction" section
+        public static ConfigValue<bool> ShowLandingPrediction;
+
         // "Diagnostics" section
         public static ConfigValue<bool> VerboseLoggingEnabled;
 
@@ -143,6 +146,14 @@ namespace SASExtended.Utilities
 
             // HOVER (session-only - see the field comment above)
             HoverVerticalVelocity = new SessionValue<float>(0f);
+
+            // LANDING PREDICTION
+            ShowLandingPrediction = new(Plugin.SWConfiguration.Bind(
+                "Landing prediction",
+                "Show landing predictions",
+                false,
+                "Show a predicted coast trajectory and ground impact marker in flight (airless bodies only)."
+                ));
 
             // DIAGNOSTICS
             VerboseLoggingEnabled = new(Plugin.SWConfiguration.Bind(

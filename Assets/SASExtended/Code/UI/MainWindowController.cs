@@ -433,6 +433,7 @@ public class MainWindowController : MonoBehaviour
         UpdateNodeTargetAvailability();
 
         WireFlightAxesToggles();
+        WireLandingPredictionToggle();
         WireSettingsButton();
 
         // Get the close button from the window. Uses RegisterCallback<ClickEvent> rather than the
@@ -784,6 +785,32 @@ public class MainWindowController : MonoBehaviour
                 FlightAxesVisualizer.Instance?.SetVisual(visualId, toggle.IsToggled);
             });
         }
+    }
+
+    // Wires the "Show landing predictions" toggle to LandingPredictionManager. Independent feature
+    // toggle (like the Flight Axes visuals above), NOT part of the mutually-exclusive mode set -
+    // never touched by ClearAllModeToggles/OnSasManagerDisengaged. Null-guarded so a not-yet-authored
+    // UXML element doesn't break the rest of OnEnable.
+    private void WireLandingPredictionToggle()
+    {
+        var toggle = _root.Q<SideToggleControl>(LandingPredictionManager.ToggleId);
+        if (toggle == null)
+        {
+            _LOGGER.LogWarning($"Landing prediction toggle '{LandingPredictionManager.ToggleId}' not found in UXML - skipping wiring.");
+            return;
+        }
+
+        toggle.SetEnabled(true);
+        toggle.SwitchToggleState(Settings.ShowLandingPrediction.Value, false);
+        toggle.RegisterCallback<ClickEvent>(evt =>
+        {
+            if (!toggle.IsEnabled)
+                return;
+            bool on = toggle.IsToggled;
+            Settings.ShowLandingPrediction.Value = on;
+            SASExtendedPlugin.Instance.SWConfiguration.Save();
+            LandingPredictionManager.Instance?.SetEnabled(on);
+        });
     }
 
     // Wires the header settings button. Clicking it swaps the window between the main view (upper +
