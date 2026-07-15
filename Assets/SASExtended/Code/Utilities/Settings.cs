@@ -178,7 +178,7 @@ namespace SASExtended.Utilities
             LandingPredictionMarkerColor = new(Plugin.SWConfiguration.Bind(
                 "Landing prediction",
                 "Impact marker color",
-                new Color(0.2f, 0.6f, 1f),
+                new Color(1.0f, 1.0f, 0.0f),
                 "Color of the predicted impact marker."
                 ));
 
