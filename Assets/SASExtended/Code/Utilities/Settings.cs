@@ -156,7 +156,10 @@ namespace SASExtended.Utilities
                 "Landing prediction",
                 "Show landing predictions",
                 false,
-                "Show a predicted coast trajectory and ground impact marker in flight (airless bodies only)."
+                "Show a predicted coast trajectory and ground impact marker in flight. Pure ballistic " +
+                "coast, no atmospheric drag/parachute model - on a body with an atmosphere the " +
+                "prediction ignores that entirely, so treat it as a rough indicator, not exact through " +
+                "a real reentry."
                 ));
 
             LandingPredictionRefreshInterval = new(Plugin.SWConfiguration.Bind(

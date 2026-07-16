@@ -19,9 +19,10 @@ namespace SASExtended.Managers
 /// predictions", toggled from the SAS Extended window's settings panel - see
 /// <c>.claude/landing_prediction_plan.md</c> for the full design.
 ///
-/// Phase 1 scope (see the plan for the reasoning): airless bodies only (pure ballistic coast -
-/// bodies with an atmosphere show nothing), always-on-top rendering (no depth occlusion/horizon
-/// culling), flight view only.
+/// Pure ballistic/Keplerian coast - no drag or parachute model, so on a body with an atmosphere
+/// the prediction ignores atmospheric effects entirely (still useful as a rough indicator for
+/// low-drag-interference flights; just don't trust it through a real reentry). Always-on-top
+/// rendering (no depth occlusion/horizon culling), flight view only.
 ///
 /// Follows <see cref="FlightAxesVisualizer"/>'s conventions: lives on the persistent
 /// SASExtended_Providers GameObject, rebuilds against the active vessel each tick. Cached
@@ -166,8 +167,10 @@ public class LandingPredictionManager : MonoBehaviour
 
     // "Where do I land if I cut thrust now" - a pure two-body-gravity coast to the first terrain
     // crossing, numerically integrated (RK4) forward from the orbit's live current state vector.
-    // Airless bodies only: an atmosphere would need a drag/parachute integrator (MechJeb's
-    // ReentrySimulation), which is out of scope for now - see the plan's non-goals.
+    // No drag/parachute model (that would need something like MechJeb's ReentrySimulation), so on
+    // a body with an atmosphere this ignores atmospheric effects entirely - still rendered, since
+    // it's a useful rough indicator for flights with little drag interference, but it will read
+    // increasingly wrong through an actual reentry.
     //
     // Deliberately NOT sampled via PatchedConicsOrbit.GetTruePositionAtUT (analytic Kepler-anomaly
     // position reconstruction): confirmed in-game that formula is numerically unreliable for
@@ -187,9 +190,9 @@ public class LandingPredictionManager : MonoBehaviour
         }
 
         var body = vessel.mainBody;
-        if (body == null || !body.hasSolidSurface || body.hasAtmosphere)
+        if (body == null || !body.hasSolidSurface)
         {
-            LogNoPrediction($"body={body?.bodyName} hasSolidSurface={body?.hasSolidSurface} hasAtmosphere={body?.hasAtmosphere}.");
+            LogNoPrediction($"body={body?.bodyName} hasSolidSurface={body?.hasSolidSurface}.");
             return;
         }
 

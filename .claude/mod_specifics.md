@@ -34,7 +34,7 @@ Design north star is feature parity with KSP1 MechJeb2's "Smart A.S.S." module �
 | `Code/SASExtendedPlugin.cs` | Mod entry point. Binds config (`Settings.Initialize()`), registers the custom UITK control factories (reflection-based `VisualElementFactoryRegistry.RegisterFactory` — see `custom_uxml_controls.md`), loads the window UXML + appbar icon via `Assets.LoadAssetAsync<T>(key).WaitForCompletion()`, spawns the `SASManager` MonoBehaviour, applies Harmony patches, and hides/restores the window on flight-scene enter/exit (`GameStateChangedMessage`). |
 | `Code/Managers/SASManager.cs` | **Core control loop.** A `MonoBehaviour` that every `Update()` computes a target `Rotation` for the active `AttitudeMode` and commands it via `SAS.LockRotation`; also drives Hover's throttle. See "How KSP2 SAS works" and "Offset math" below. Exposes `IsEngaged` and `CommandedRotation` (the slew-limited setpoint) for the Flight Axes visuals. |
 | `Code/Managers/FlightAxesVisualizer.cs` | **In-world flight-axis visuals** — split control axes (fwd/up/right), commanded/target attitude arrows, orbital (prograde/normal/radial-in), surface & horizontal velocity arrows, CoM marker — toggled from the settings panel. Data-driven arrow registry (`_arrowSpecs`/`SetVisual`/`ToggleIds`). Reuses the game's own debug-shape components/prefabs. See "Flight Axes visuals" below. |
-| `Code/Managers/LandingPredictionManager.cs` | **In-world landing prediction visuals** — a trajectory line + ground impact marker for the active vessel's predicted unpowered coast, on airless bodies only. RK4-integrated off the orbit's live state vector (deliberately not the orbit's analytic Kepler-anomaly reconstruction, which is unreliable in this predictor's near-radial regime). See "Landing prediction visuals" below and [`landing_prediction_fixes.md`](landing_prediction_fixes.md) for the debugging history — read that before touching this file again. |
+| `Code/Managers/LandingPredictionManager.cs` | **In-world landing prediction visuals** — a trajectory line + ground impact marker for the active vessel's predicted unpowered coast, on any body with a solid surface (pure ballistic coast, no atmospheric drag model - rough indicator only on atmospheric bodies). RK4-integrated off the orbit's live state vector (deliberately not the orbit's analytic Kepler-anomaly reconstruction, which is unreliable in this predictor's near-radial regime). See "Landing prediction visuals" below and [`landing_prediction_fixes.md`](landing_prediction_fixes.md) for the debugging history — read that before touching this file again. |
 | `Code/PureMath/{AttitudeMath,HoverThrottleMath}.cs` | Pure quaternion/control-law math extracted out of `SASManager`, free of KSP.Sim's frame-aware types, so it can be exercised by edit-mode unit tests instead of only in-game. Change the *math* here; keep `SASManager` as the thin glue that feeds it live telemetry. |
 | `Tests/EditMode/{AttitudeMathTests,HoverThrottleMathTests}.cs` | Unity Test Framework edit-mode tests for the above. Run from Unity's Test Runner window. |
 | `Code/Models/AttitudeMode.cs` | Enum of every mode (see full list below). |
@@ -253,9 +253,11 @@ Optional in-world visuals for the active vessel's predicted **unpowered coast**:
 from the vessel down to the ground, plus a marker at the predicted impact point — one toggle
 (`show-landing-prediction`, `LandingPredictionManager.ToggleId`) in the settings panel alongside the
 Flight Axes toggles, persisted via `Settings.ShowLandingPrediction`. Modelled on KSP1 MechJeb2's
-*Landing Guidance → Show Landing predictions*. **Phase 1 scope: airless bodies only** (no
-atmosphere/drag integrator — a body with an atmosphere simply shows nothing, mirroring MechJeb's
-`NO_REENTRY` outcome), **always-on-top rendering** (`_ZTest = Always`, `renderQueue = Overlay` — see
+*Landing Guidance → Show Landing predictions*. **Pure ballistic/Keplerian coast, no drag/parachute
+integrator** — renders on every body, including ones with an atmosphere, but atmospheric effects
+are never modeled, so on an atmospheric body it's a rough indicator only (drifts further from
+reality the more a real reentry's drag/heating actually matters), **always-on-top rendering**
+(`_ZTest = Always`, `renderQueue = Overlay` — see
 `FlightAxesVisualizer`'s CoM-marker precedent), **flight view only**. Full design rationale in
 [`landing_prediction_plan.md`](landing_prediction_plan.md); the actual implementation deviates from
 that plan in several load-bearing ways documented in
