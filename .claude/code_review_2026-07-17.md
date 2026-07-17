@@ -25,7 +25,7 @@ called out inline.
 | 5 | NOT STARTED | Unchecked async prefab-load callback | Crash |
 | 6 | NOT STARTED | A full config file write on every click in the window | Perf |
 | 7 | DONE | Per-frame waste in `LandingPredictionManager` | Perf |
-| 8 | NOT STARTED | Replace the ~300-line `SetRotation` switch with a registry | Structure |
+| 8 | DONE | Replace the ~300-line `SetRotation` switch with a registry | Structure |
 | 9 | NOT STARTED | Extract the (now four times) duplicated offset row | Structure |
 | 10 | NOT STARTED | Move the landing predictor's math into `PureMath/` | Structure |
 
@@ -279,6 +279,31 @@ the four special cases stay explicit and become *visibly* special. Cuts roughly 
 **This is the codebase's own idiom** — `FlightAxesVisualizer._arrowSpecs` and `ToggleIds` are
 exactly this pattern. The recommendation is to apply an established local convention to the one
 file that predates it, not to import a new one.
+
+> **Implemented, with one deviation from the literal recommendation:** `TargetParPlus`/
+> `TargetParMinus` build their rotation via `BuildTargetOrientationRotation` (the target's own
+> orientation frame), not a direction vector + `BuildPointingRotation` like every other mode — they
+> genuinely can't return a `Vector` from the registry, so they stay explicit alongside the four
+> already-special modes (six explicit cases total: `KillRot`, `Hold`, `Hover`, `Maneuver`,
+> `TargetParPlus`, `TargetParMinus`). The other 18 modes (all Orbit/Surface/Target-non-PAR/Star,
+> matching the doc's own case count once TARGET PAR is excluded) are now one-line entries in a
+> static `_directionSelectors` dictionary, keyed by `AttitudeMode`, of
+> `Func<TelemetryComponent, ICoordinateSystem, Vector, Vector, Vector>` (telemetry, referenceFrame,
+> north, upwards → direction) — `north`/`upwards` had to be added to the signature beyond the doc's
+> sketch since several modes (`SurfaceSurf`, `SurfaceUp`, both Hvel modes) need one or both and
+> can't derive them from telemetry alone. Built once as a `static readonly` field exactly like
+> `FlightAxesVisualizer._arrowSpecs`; `SpecialStarPlus`/`Minus` reach `_engagedParentStar` via the
+> static `Instance` singleton rather than capturing `this`, mirroring how `_arrowSpecs`' own entries
+> reach `SASManager.Instance.CommandedRotation`. The switch's `default:` case now does the shared
+> lookup + `BuildPointingRotation` call (one shared call site, as recommended), falling back to the
+> original horizon-pointing behavior if a mode has no registry entry — dead in practice, since
+> `AttitudeMode.None` never reaches this switch (`Update()` returns early on it) and every other
+> enum value has an entry, but kept as a safety net matching the switch's original fallback exactly.
+> The verbatim-duplicated Hvel± projection also got extracted into a shared
+> `HorizontalVelocityDirection` helper, closing that duplication out too. Net: -51 lines (the doc's
+> "~200" estimate undercounts how much of that comment-heavy codebase's density comes back as
+> per-entry documentation in the registry itself — the *code* shrank far more than the line count
+> alone shows).
 
 ### 9. Extract the (now four times) duplicated offset row
 `Assets/SASExtended/Code/UI/MainWindowController.cs:399-460` and the H/P/R rows above

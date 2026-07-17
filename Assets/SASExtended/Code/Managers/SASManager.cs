@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using KSP.Api;
 using KSP.Game;
 using KSP.Sim;
 using KSP.Sim.impl;
@@ -360,6 +362,85 @@ public class SASManager : MonoBehaviour
             UpdateHoverThrottle(vessel);
     }
 
+    // Every "point the vessel at X" mode (all Orbit/Surface/Target/Star modes except the two TARGET
+    // PAR ones, which build their rotation from the target's own orientation frame via
+    // BuildTargetOrientationRotation rather than a simple direction - see SetRotation) shares one
+    // shape: compute a direction vector, hand it to BuildPointingRotation. This table is that shared
+    // step - each entry takes the same (telemetry, referenceFrame, north, upwards) SetRotation
+    // already has in hand and returns just the direction, reframed as needed. Mirrors
+    // FlightAxesVisualizer's _arrowSpecs/BuildArrowSpecs (Dictionary<..., Func<...>> built once,
+    // consumed by a single shared call site) - see code_review_2026-07-17.md #8.
+    //
+    // Static (not instance) like _arrowSpecs, for the same reason: SpecialStarPlus/Minus need
+    // _engagedParentStar, but going through the static Instance singleton (exactly how
+    // FlightAxesVisualizer's own entries reach SASManager.Instance.CommandedRotation) avoids
+    // capturing `this` in a per-instance table, so this can be a true allocate-once static like every
+    // other entry.
+    private static readonly Dictionary<AttitudeMode, Func<TelemetryComponent, ICoordinateSystem, Vector, Vector, Vector>> _directionSelectors =
+        BuildDirectionSelectors();
+
+    private static Dictionary<AttitudeMode, Func<TelemetryComponent, ICoordinateSystem, Vector, Vector, Vector>> BuildDirectionSelectors()
+    {
+        // Lambda params are always (tel, frame, north, up) in that order, matching the delegate's
+        // declared parameter order above - not every entry uses all four.
+        return new Dictionary<AttitudeMode, Func<TelemetryComponent, ICoordinateSystem, Vector, Vector, Vector>>
+        {
+            // The previous heading/pitch derivation (SignedAngle vs. north + Asin vs. upwards, then
+            // reconstructing via a chain of local AngleAxis rotations) was only exact when the target
+            // was near the horizon frame's "upwards" axis (its geometry degenerates into a gimbal
+            // lock there, which incidentally hid the bug for Radial+/-) - off by up to ~90 degrees in
+            // general (confirmed numerically). BuildPointingRotation uses LookRotation instead, which
+            // directly aligns local "up" (the vessel's nose axis) with the target with zero error for
+            // any target/upwards pair - see SetRotation's call site.
+            [AttitudeMode.OrbitPrograde] = (tel, frame, north, up) => Vector.Reframed(Vector.normalize(tel.OrbitalMovementVelocity), frame),
+            [AttitudeMode.OrbitRetrograde] = (tel, frame, north, up) => Vector.negate(Vector.Reframed(Vector.normalize(tel.OrbitalMovementVelocity), frame)),
+            [AttitudeMode.OrbitNormal] = (tel, frame, north, up) => Vector.Reframed(tel.OrbitMovementNormal, frame),
+            [AttitudeMode.OrbitAntiNormal] = (tel, frame, north, up) => Vector.negate(Vector.Reframed(tel.OrbitMovementNormal, frame)),
+            [AttitudeMode.OrbitRadialIn] = (tel, frame, north, up) => Vector.Reframed(tel.OrbitMovementRadialIn, frame),
+            [AttitudeMode.OrbitRadialOut] = (tel, frame, north, up) => Vector.Reframed(tel.OrbitMovementRadialOut, frame),
+
+            [AttitudeMode.SurfaceSurf] = (tel, frame, north, up) => north,
+            [AttitudeMode.SurfaceSvelPlus] = (tel, frame, north, up) => Vector.Reframed(Vector.normalize(tel.SurfaceMovementPrograde), frame),
+            [AttitudeMode.SurfaceSvelMinus] = (tel, frame, north, up) => Vector.negate(Vector.Reframed(Vector.normalize(tel.SurfaceMovementPrograde), frame)),
+            [AttitudeMode.SurfaceHvelPlus] = (tel, frame, north, up) => HorizontalVelocityDirection(tel, frame, up),
+            [AttitudeMode.SurfaceHvelMinus] = (tel, frame, north, up) => Vector.negate(HorizontalVelocityDirection(tel, frame, up)),
+            // Target is "upwards" itself here, so it can't also be used as LookRotation's up-hint
+            // (degenerate/parallel) - SetRotation's call site special-cases the hint to "north"
+            // for this one mode instead (see the comment there), same remap every other mode has.
+            [AttitudeMode.SurfaceUp] = (tel, frame, north, up) => up,
+
+            [AttitudeMode.TargetPlus] = (tel, frame, north, up) => Vector.Reframed(Vector.normalize(tel.TargetDirection), frame),
+            [AttitudeMode.TargetMinus] = (tel, frame, north, up) => Vector.negate(Vector.Reframed(Vector.normalize(tel.TargetDirection), frame)),
+            // Vessel's velocity relative to the target (MechJeb's RELATIVE_VELOCITY) - confirmed via
+            // decompile that TelemetryComponent computes TargetPrograde as exactly
+            // normalize(OrbitalMovementVelocity - targetOrbitalVelocity), i.e. relative velocity, not
+            // orbital prograde around the target.
+            [AttitudeMode.TargetRvelPlus] = (tel, frame, north, up) => Vector.Reframed(tel.TargetPrograde, frame),
+            [AttitudeMode.TargetRvelMinus] = (tel, frame, north, up) => Vector.negate(Vector.Reframed(tel.TargetPrograde, frame)),
+
+            // _engagedParentStar is resolved once at engage time (see SetMode) rather than walked
+            // from scratch every tick - the parent star can't change while a mode stays engaged, and
+            // Update()'s IsStarMode guard already disengages if it's ever null here.
+            [AttitudeMode.SpecialStarPlus] = (tel, frame, north, up) =>
+                Vector.Reframed(Vector.normalize(Position.Delta(Instance._engagedParentStar.Position, tel.RootPosition)), frame),
+            [AttitudeMode.SpecialStarMinus] = (tel, frame, north, up) =>
+                Vector.negate(Vector.Reframed(Vector.normalize(Position.Delta(Instance._engagedParentStar.Position, tel.RootPosition)), frame)),
+        };
+    }
+
+    // Horizontal component of surface velocity (vertical component projected out via the same
+    // dot/minus pattern Hover uses for its own tilt calc - Vector.dot/minus reframe their second
+    // argument into the first's coordinateSystem automatically, so mixing the unreframed telemetry
+    // vector with the already-reframed "upwards" here is safe). Shared by SurfaceHvelPlus/Minus,
+    // which previously duplicated this projection verbatim between the two cases (see
+    // code_review_2026-07-17.md #8) - Minus just negates the result.
+    private static Vector HorizontalVelocityDirection(TelemetryComponent telemetry, ICoordinateSystem referenceFrame, Vector upwards)
+    {
+        return Vector.Reframed(
+            Vector.normalize(Vector.minus(telemetry.SurfaceMovementVelocity, Vector.scale(upwards, Vector.dot(telemetry.SurfaceMovementVelocity, upwards)))),
+            referenceFrame);
+    }
+
     private void SetRotation(VesselComponent vessel, TelemetryComponent telemetry)
     {
         // RefreshAutopilotTelemetry() is the game's own "autopilot consumers call this before
@@ -398,166 +479,15 @@ public class SASManager : MonoBehaviour
 
         switch (AttitudeMode)
         {
-            // The previous heading/pitch derivation (SignedAngle vs. north + Asin vs. upwards, then
-            // reconstructing via a chain of local AngleAxis rotations) was only exact when the target
-            // was near the horizon frame's "upwards" axis (its geometry degenerates into a gimbal lock
-            // there, which incidentally hid the bug for Radial+/-) - off by up to ~90 degrees in
-            // general (confirmed numerically). BuildPointingRotation uses LookRotation instead, which
-            // directly aligns local "up" (the vessel's nose axis - see Euler(90,0,0)) with the target
-            // with zero error for any target/upwards pair.
-            case AttitudeMode.OrbitPrograde:
-            {
-                var orbitPrograde = Vector.Reframed(Vector.normalize(telemetry.OrbitalMovementVelocity), referenceFrame);
-                _rotation = BuildPointingRotation(vessel, orbitPrograde, upwards, out effX, out effY, out effZ);
-                loggedTarget = orbitPrograde;
-                break;
-            }
-            case AttitudeMode.OrbitRetrograde:
-            {
-                var orbitRetrograde = Vector.negate(Vector.Reframed(Vector.normalize(telemetry.OrbitalMovementVelocity), referenceFrame));
-                _rotation = BuildPointingRotation(vessel, orbitRetrograde, upwards, out effX, out effY, out effZ);
-                loggedTarget = orbitRetrograde;
-                break;
-            }
-            case AttitudeMode.OrbitNormal:
-            {
-                var orbitNormal = Vector.Reframed(telemetry.OrbitMovementNormal, referenceFrame);
-                _rotation = BuildPointingRotation(vessel, orbitNormal, upwards, out effX, out effY, out effZ);
-                loggedTarget = orbitNormal;
-                break;
-            }
-            case AttitudeMode.OrbitAntiNormal:
-            {
-                var orbitAntiNormal = Vector.negate(Vector.Reframed(telemetry.OrbitMovementNormal, referenceFrame));
-                _rotation = BuildPointingRotation(vessel, orbitAntiNormal, upwards, out effX, out effY, out effZ);
-                loggedTarget = orbitAntiNormal;
-                break;
-            }
-            case AttitudeMode.OrbitRadialIn:
-            {
-                var orbitRadialIn = Vector.Reframed(telemetry.OrbitMovementRadialIn, referenceFrame);
-                _rotation = BuildPointingRotation(vessel, orbitRadialIn, upwards, out effX, out effY, out effZ);
-                loggedTarget = orbitRadialIn;
-                break;
-            }
-            case AttitudeMode.OrbitRadialOut:
-            {
-                var orbitRadialOut = Vector.Reframed(telemetry.OrbitMovementRadialOut, referenceFrame);
-                _rotation = BuildPointingRotation(vessel, orbitRadialOut, upwards, out effX, out effY, out effZ);
-                loggedTarget = orbitRadialOut;
-                break;
-            }
-
-
-            case AttitudeMode.SurfaceSurf:
-                _rotation = BuildPointingRotation(vessel, north, upwards, out effX, out effY, out effZ);
-                loggedTarget = north;
-                break;
-            case AttitudeMode.SurfaceSvelPlus:
-            {
-                var surfacePrograde = Vector.Reframed(Vector.normalize(telemetry.SurfaceMovementPrograde), referenceFrame);
-                _rotation = BuildPointingRotation(vessel, surfacePrograde, upwards, out effX, out effY, out effZ);
-                loggedTarget = surfacePrograde;
-                break;
-            }
-            case AttitudeMode.SurfaceSvelMinus:
-            {
-                var surfaceRetrograde = Vector.negate(Vector.Reframed(Vector.normalize(telemetry.SurfaceMovementPrograde), referenceFrame));
-                _rotation = BuildPointingRotation(vessel, surfaceRetrograde, upwards, out effX, out effY, out effZ);
-                loggedTarget = surfaceRetrograde;
-                break;
-            }
-            case AttitudeMode.SurfaceHvelPlus:
-            {
-                // Horizontal component of surface velocity (vertical component projected out via the
-                // same dot/minus pattern Hover already uses for its tilt calc - Vector.dot/minus
-                // reframe their second argument into the first's coordinateSystem automatically, so
-                // mixing the unreframed telemetry vector with the already-reframed "upwards" here is
-                // safe).
-                var horizontalVelocity = Vector.Reframed(
-                    Vector.normalize(Vector.minus(telemetry.SurfaceMovementVelocity, Vector.scale(upwards, Vector.dot(telemetry.SurfaceMovementVelocity, upwards)))),
-                    referenceFrame);
-                _rotation = BuildPointingRotation(vessel, horizontalVelocity, upwards, out effX, out effY, out effZ);
-                loggedTarget = horizontalVelocity;
-                break;
-            }
-            case AttitudeMode.SurfaceHvelMinus:
-            {
-                // Same horizontal-velocity projection as SurfaceHvelPlus (see comment there), negated.
-                var antiHorizontalVelocity = Vector.negate(Vector.Reframed(
-                    Vector.normalize(Vector.minus(telemetry.SurfaceMovementVelocity, Vector.scale(upwards, Vector.dot(telemetry.SurfaceMovementVelocity, upwards)))),
-                    referenceFrame));
-                _rotation = BuildPointingRotation(vessel, antiHorizontalVelocity, upwards, out effX, out effY, out effZ);
-                loggedTarget = antiHorizontalVelocity;
-                break;
-            }
-            case AttitudeMode.TargetPlus:
-            {
-                var target = Vector.Reframed(Vector.normalize(telemetry.TargetDirection), referenceFrame);
-                _rotation = BuildPointingRotation(vessel, target, upwards, out effX, out effY, out effZ);
-                loggedTarget = target;
-                break;
-            }
-            case AttitudeMode.TargetMinus:
-            {
-                var antiTarget = Vector.negate(Vector.Reframed(Vector.normalize(telemetry.TargetDirection), referenceFrame));
-                _rotation = BuildPointingRotation(vessel, antiTarget, upwards, out effX, out effY, out effZ);
-                loggedTarget = antiTarget;
-                break;
-            }
-            case AttitudeMode.TargetRvelPlus:
-            {
-                // Vessel's velocity relative to the target (MechJeb's RELATIVE_VELOCITY) - confirmed
-                // via decompile that TelemetryComponent computes TargetPrograde as exactly
-                // normalize(OrbitalMovementVelocity - targetOrbitalVelocity), i.e. relative velocity,
-                // not orbital prograde around the target.
-                var targetRelativePrograde = Vector.Reframed(telemetry.TargetPrograde, referenceFrame);
-                _rotation = BuildPointingRotation(vessel, targetRelativePrograde, upwards, out effX, out effY, out effZ);
-                loggedTarget = targetRelativePrograde;
-                break;
-            }
-            case AttitudeMode.TargetRvelMinus:
-            {
-                // Negation of the target-relative velocity described above TargetRvelPlus.
-                var targetRelativeRetrograde = Vector.negate(Vector.Reframed(telemetry.TargetPrograde, referenceFrame));
-                _rotation = BuildPointingRotation(vessel, targetRelativeRetrograde, upwards, out effX, out effY, out effZ);
-                loggedTarget = targetRelativeRetrograde;
-                break;
-            }
+            // TARGET PAR builds its rotation from the target's own orientation frame
+            // (BuildTargetOrientationRotation), not a simple direction vector + BuildPointingRotation
+            // - so, unlike every mode below, it can't live in _directionSelectors. Stays explicit
+            // alongside the four genuinely special modes further down.
             case AttitudeMode.TargetParPlus:
                 _rotation = BuildTargetOrientationRotation(vessel, telemetry, reversed: false, upwards, out effX, out effY, out effZ);
                 break;
             case AttitudeMode.TargetParMinus:
                 _rotation = BuildTargetOrientationRotation(vessel, telemetry, reversed: true, upwards, out effX, out effY, out effZ);
-                break;
-            // Star pointing now runs through the same LookRotation-based BuildPointingRotation as
-            // every other mode (the earlier "doesn't work" note predates that rewrite - see the
-            // Offset math section of mod_specifics.md); wired to the UI but not yet re-verified
-            // in-game.
-            case AttitudeMode.SpecialStarPlus:
-            {
-                // _engagedParentStar is resolved once at engage time (see SetMode) rather than walked
-                // from scratch every tick - the parent star can't change while a mode stays engaged,
-                // and Update()'s IsStarMode guard above already disengages if it's ever null here.
-                var sun = Vector.Reframed(Vector.normalize(Position.Delta(_engagedParentStar.Position, telemetry.RootPosition)), referenceFrame);
-                _rotation = BuildPointingRotation(vessel, sun, upwards, out effX, out effY, out effZ);
-                loggedTarget = sun;
-                break;
-            }
-            case AttitudeMode.SpecialStarMinus:
-            {
-                // See SpecialStarPlus above re: _engagedParentStar.
-                var antiSun = Vector.negate(Vector.Reframed(Vector.normalize(Position.Delta(_engagedParentStar.Position, telemetry.RootPosition)), referenceFrame));
-                _rotation = BuildPointingRotation(vessel, antiSun, upwards, out effX, out effY, out effZ);
-                loggedTarget = antiSun;
-                break;
-            }
-            case AttitudeMode.SurfaceUp:
-                // Target is "upwards" itself, so it can't also be used as LookRotation's up-hint
-                // (degenerate/parallel) - use "north" as the hint instead, same remap pattern as
-                // every other case.
-                _rotation = BuildPointingRotation(vessel, upwards, north, out effX, out effY, out effZ);
-                loggedTarget = upwards;
                 break;
 
             case AttitudeMode.Hover:
@@ -695,9 +625,29 @@ public class SASManager : MonoBehaviour
                 }
                 break;
 
-            default: // horizon
-                _rotation = BuildPointingRotation(vessel, north, upwards, out effX, out effY, out effZ);
+            // Every other mode (all Orbit/Surface/Target-non-PAR/Star modes) shares one shape: look
+            // up a direction from _directionSelectors, then BuildPointingRotation. AttitudeMode.None
+            // never reaches here (Update() returns early on it) and every other enum value has a
+            // registry entry above, so the "no entry" branch is an unreachable safety net matching
+            // this switch's original horizon fallback - not a live code path.
+            default:
+            {
+                if (_directionSelectors.TryGetValue(AttitudeMode, out var selectDirection))
+                {
+                    var dir = selectDirection(telemetry, referenceFrame, north, upwards);
+                    // SurfaceUp's direction IS "upwards" itself, so "upwards" can't also be used as
+                    // LookRotation's up-hint (degenerate/parallel) - "north" works as the hint for
+                    // every mode, including this one, so it's the one case that needs the swap.
+                    var hint = AttitudeMode == AttitudeMode.SurfaceUp ? north : upwards;
+                    _rotation = BuildPointingRotation(vessel, dir, hint, out effX, out effY, out effZ);
+                    loggedTarget = dir;
+                }
+                else
+                {
+                    _rotation = BuildPointingRotation(vessel, north, upwards, out effX, out effY, out effZ);
+                }
                 break;
+            }
         }
 
         // Gated behind VerboseLoggingEnabled (see the [Hover/attitude] comment above) - also skips the
