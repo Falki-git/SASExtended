@@ -92,13 +92,11 @@ public class MainWindowController : MonoBehaviour
     // Hover's own Roll row - shares the target angle (SASManager.Z) with the shared attitude panel's
     // Roll row (_zToggle/_zValue below), but drives its OWN enabled flag (SASManager.HoverRollEnabled,
     // not the shared ZEnabled - see its field comment for why) since Hover's panel replaces the
-    // shared one entirely. Kept in sync at the panel-switch boundary - see UpdatePanelForMode.
+    // shared one entirely. Kept in sync at the panel-switch boundary - see UpdatePanelForMode. Wired
+    // by BindOffsetRow, same as the shared X/Y/Z rows below - only the toggle/value fields are kept
+    // here since nothing outside the wiring itself needs the ± /preset buttons again.
     private SideToggleControl _hoverZToggle;
     private FloatField _hoverZValue;
-    private Button _hoverZMinus;
-    private Button _hoverZPlus;
-    private Button _hoverZFirst;
-    private Button _hoverZSecond;
 
     // Flight Axes visual toggles are wired in a loop over FlightAxesVisualizer.ToggleIds (see
     // WireFlightAxesToggles) - they're independent of the mutually-exclusive mode toggles above, so
@@ -121,30 +119,14 @@ public class MainWindowController : MonoBehaviour
     // used by ClearAllModeToggles/RegisterModeButton so only one is ever shown toggled on.
     private SideToggleControl[] _allModeToggles;
 
+    // Wired by BindOffsetRow - see its comment. Only the toggle/value fields are kept as class
+    // fields; the ± /preset buttons for each row are local to that call and never referenced again.
     private SideToggleControl _xToggle;
     private FloatField _xValue;
-    private Button _xMinus;
-    private Button _xPlus;
-    private Button _xFirst;
-    private Button _xSecond;
-    private Button _xFirstSpecialButton;
-    private Button _xSecondSpecialButton;
     private SideToggleControl _yToggle;
     private FloatField _yValue;
-    private Button _yMinus;
-    private Button _yPlus;
-    private Button _yFirst;
-    private Button _ySecond;
-    private Button _yFirstSpecialButton;
-    private Button _ySecondSpecialButton;
     private SideToggleControl _zToggle;
     private FloatField _zValue;
-    private Button _zMinus;
-    private Button _zPlus;
-    private Button _zFirst;
-    private Button _zSecond;
-    private Button _zFirstSpecialButton;
-    private Button _zSecondSpecialButton;
 
 
     /// <summary>
@@ -266,6 +248,70 @@ public class MainWindowController : MonoBehaviour
             _LOGGER.LogError($"Expected UI element '{name}' ({typeof(T).Name}) not found in UXML.");
         return element;
     }
+
+    // Binds one Heading/Pitch/Roll-style offset row: an enable toggle, a value FloatField, ± nudge
+    // buttons, and two presets (always 0, then a mode-specific second value - see secondPreset).
+    // Element names are "<prefix>-toggle"/"-value"/"-minus"/"-plus"/"-first"/"-second" under
+    // `container`. Shared by the shared attitude panel's Heading/Pitch/Roll rows and Hover's own
+    // Roll row, which used to be four near-verbatim ~50-line copies differing only in element-name
+    // prefix and which SASManager field they wrote - see code_review_2026-07-17.md #9 (a fourth
+    // copy, Hover's, already produced a real stale-value bug from the two Roll widgets drifting
+    // apart relative to each other - see commit efffa50's own message).
+    //
+    // Returns the toggle and value FloatField - unlike the ± /preset buttons (nothing outside this
+    // method ever needs those again, so they're local variables here), callers keep these two
+    // around: UpdateAttitudeColors, ApplyStoredOffsetsForCurrentMode, OnSasManagerDisengaged, and
+    // UpdatePanelForMode all read them after wiring.
+    private (SideToggleControl Toggle, FloatField Value) BindOffsetRow(
+        VisualElement container, string prefix, Action<double> setValue, Action<bool> setEnabledFlag, Func<float> secondPreset)
+    {
+        var toggle = Require<SideToggleControl>(container, $"{prefix}-toggle");
+        toggle.RegisterCallback<ClickEvent>(evt => setEnabledFlag(toggle.IsToggled));
+
+        var value = Require<FloatField>(container, $"{prefix}-value");
+        value.RegisterValueChangedCallback(evt => setValue(evt.newValue));
+
+        var minus = Require<Button>(container, $"{prefix}-minus");
+        minus.RegisterCallback<ClickEvent>(evt => value.value--);
+        var plus = Require<Button>(container, $"{prefix}-plus");
+        plus.RegisterCallback<ClickEvent>(evt => value.value++);
+        var first = Require<Button>(container, $"{prefix}-first");
+        first.RegisterCallback<ClickEvent>(evt => value.value = 0);
+        var second = Require<Button>(container, $"{prefix}-second");
+        second.RegisterCallback<ClickEvent>(evt => value.value = secondPreset());
+
+        return (toggle, value);
+    }
+
+    // Writes a new Heading/Pitch/Roll value both into the live SASManager field the active mode
+    // reads every tick AND into the per-mode remembered value (Settings.AttitudeOffsets), so it's
+    // restored the next time this mode is engaged - see ApplyStoredOffsetsForCurrentMode. SetRoll is
+    // shared by BOTH the standard Roll row and Hover's own Roll row (see BindOffsetRow's call sites)
+    // since they drive the exact same SASManager.Z despite having separate enable toggles.
+    private static void SetHeading(double newValue)
+    {
+        SASManager.Instance.X = newValue;
+        if (Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))
+            offsets.Heading.Value = (float)newValue;
+    }
+
+    private static void SetPitch(double newValue)
+    {
+        SASManager.Instance.Y = newValue;
+        if (Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))
+            offsets.Pitch.Value = (float)newValue;
+    }
+
+    private static void SetRoll(double newValue)
+    {
+        SASManager.Instance.Z = newValue;
+        if (Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))
+            offsets.Roll.Value = (float)newValue;
+    }
+
+    // The Roll row's "second" preset button reads back the vessel's own live current roll ("CUR")
+    // instead of a fixed angle like Heading/Pitch's 90 - shared by both Roll rows (see SetRoll).
+    private static float CurrentRollPreset() => Mathf.Round((float)SASManager.Instance.CurrentRollOffset);
 
     private void WireWindowChrome()
     {
@@ -425,81 +471,9 @@ public class MainWindowController : MonoBehaviour
 
     private void WireOffsetRows()
     {
-        _xToggle = Require<SideToggleControl>("x-toggle");
-        _xToggle.RegisterCallback<ClickEvent>(OnXToggleClicked);
-        _xValue = Require<FloatField>("x-value");
-        _xValue.RegisterValueChangedCallback(OnXChanged);
-        _yToggle = Require<SideToggleControl>("y-toggle");
-        _yToggle.RegisterCallback<ClickEvent>(OnYToggleClicked);
-        _yValue = Require<FloatField>("y-value");
-        _yValue.RegisterValueChangedCallback(OnYChanged);
-        _zToggle = Require<SideToggleControl>("z-toggle");
-        _zToggle.RegisterCallback<ClickEvent>(OnZToggleClicked);
-        _zValue = Require<FloatField>("z-value");
-        _zValue.RegisterValueChangedCallback(OnZChanged);
-
-        _xMinus = Require<Button>("x-minus");
-        _xMinus.RegisterCallback<ClickEvent>(evt =>
-        {
-            _xValue.value--;
-        });
-        _xPlus = Require<Button>("x-plus");
-        _xPlus.RegisterCallback<ClickEvent>(evt =>
-        {
-            _xValue.value++;
-        });
-        _xFirst = Require<Button>("x-first");
-        _xFirst.RegisterCallback<ClickEvent>(evt =>
-        {
-            _xValue.value = 0;
-        });
-        _xSecond = Require<Button>("x-second");
-        _xSecond.RegisterCallback<ClickEvent>(evt =>
-        {
-            _xValue.value = 90;
-        });
-
-        _yMinus = Require<Button>("y-minus");
-        _yMinus.RegisterCallback<ClickEvent>(evt =>
-        {
-            _yValue.value--;
-        });
-        _yPlus = Require<Button>("y-plus");
-        _yPlus.RegisterCallback<ClickEvent>(evt =>
-        {
-            _yValue.value++;
-        });
-        _yFirst = Require<Button>("y-first");
-        _yFirst.RegisterCallback<ClickEvent>(evt =>
-        {
-            _yValue.value = 0;
-        });
-        _ySecond = Require<Button>("y-second");
-        _ySecond.RegisterCallback<ClickEvent>(evt =>
-        {
-            _yValue.value = 90;
-        });
-
-        _zMinus = Require<Button>("z-minus");
-        _zMinus.RegisterCallback<ClickEvent>(evt =>
-        {
-            _zValue.value--;
-        });
-        _zPlus = Require<Button>("z-plus");
-        _zPlus.RegisterCallback<ClickEvent>(evt =>
-        {
-            _zValue.value++;
-        });
-        _zFirst = Require<Button>("z-first");
-        _zFirst.RegisterCallback<ClickEvent>(evt =>
-        {
-            _zValue.value = 0;
-        });
-        _zSecond = Require<Button>("z-second");
-        _zSecond.RegisterCallback<ClickEvent>(evt =>
-        {
-            _zValue.value = Mathf.Round((float)SASManager.Instance.CurrentRollOffset);
-        });
+        (_xToggle, _xValue) = BindOffsetRow(_root, "x", SetHeading, on => SASManager.Instance.XEnabled = on, () => 90f);
+        (_yToggle, _yValue) = BindOffsetRow(_root, "y", SetPitch, on => SASManager.Instance.YEnabled = on, () => 90f);
+        (_zToggle, _zValue) = BindOffsetRow(_root, "z", SetRoll, on => SASManager.Instance.ZEnabled = on, CurrentRollPreset);
     }
 
     private void WireHoverControlsPanel()
@@ -543,31 +517,11 @@ public class MainWindowController : MonoBehaviour
             SASManager.Instance.CancelHorizontalVelocity = _cancelHorizontalVelocityToggle.IsToggled;
         });
 
-        _hoverZToggle = Require<SideToggleControl>(_hoverControlsContainer, "hover-z-toggle");
-        _hoverZToggle.RegisterCallback<ClickEvent>(OnHoverZToggleClicked);
-        _hoverZValue = Require<FloatField>(_hoverControlsContainer, "hover-z-value");
-        _hoverZValue.RegisterValueChangedCallback(OnHoverZChanged);
-
-        _hoverZMinus = Require<Button>(_hoverControlsContainer, "hover-z-minus");
-        _hoverZMinus.RegisterCallback<ClickEvent>(evt =>
-        {
-            _hoverZValue.value--;
-        });
-        _hoverZPlus = Require<Button>(_hoverControlsContainer, "hover-z-plus");
-        _hoverZPlus.RegisterCallback<ClickEvent>(evt =>
-        {
-            _hoverZValue.value++;
-        });
-        _hoverZFirst = Require<Button>(_hoverControlsContainer, "hover-z-first");
-        _hoverZFirst.RegisterCallback<ClickEvent>(evt =>
-        {
-            _hoverZValue.value = 0;
-        });
-        _hoverZSecond = Require<Button>(_hoverControlsContainer, "hover-z-second");
-        _hoverZSecond.RegisterCallback<ClickEvent>(evt =>
-        {
-            _hoverZValue.value = Mathf.Round((float)SASManager.Instance.CurrentRollOffset);
-        });
+        // Same SetRoll/CurrentRollPreset as the shared Roll row (_zToggle/_zValue in WireOffsetRows)
+        // - the two rows drive the exact same SASManager.Z, differing only in which enabled-flag
+        // they gate on (HoverRollEnabled here vs. the shared ZEnabled) - see BindOffsetRow.
+        (_hoverZToggle, _hoverZValue) = BindOffsetRow(
+            _hoverControlsContainer, "hover-z", SetRoll, on => SASManager.Instance.HoverRollEnabled = on, CurrentRollPreset);
     }
 
     private void WireInitialPanelState()
@@ -787,18 +741,18 @@ public class MainWindowController : MonoBehaviour
     // since neither uses the generic offset mechanism at all. Hover only cares about Roll
     // (Heading/Pitch go unused) and has its own Roll widget (_hoverZValue) alongside the shared one.
     //
-    // Deliberately does NOT set SASManager.X/Y/Z by assigning _xValue.value/etc. and relying on
-    // OnXChanged/OnYChanged/OnZChanged to cascade the write, the way this used to work: Unity's
-    // FloatField only raises its ChangeEvent when the new value differs from whatever it last
-    // displayed, so that approach silently no-ops whenever a mode's remembered angle happens to
-    // equal the previous mode's - leaving SASManager.Z stuck on a stale value from the mode just
-    // left. This bit Roll specifically once it gained a second widget (_hoverZValue, for Hover's
-    // own Roll row): editing Roll while in Hover updates _hoverZValue + Z, but _zValue's own cached
-    // "last displayed" value doesn't move, so switching to a normal mode whose stored Roll happened
-    // to coincide with THAT stale cache would silently fail to restore the real value into Z.
-    // Writing SASManager.X/Y/Z here directly, then pushing to the fields via SetValueWithoutNotify
-    // (so this doesn't also trigger OnXChanged/OnYChanged/OnZChanged and re-store the same value a
-    // second time), sidesteps the whole class of bug.
+    // Deliberately does NOT set SASManager.X/Y/Z by assigning _xValue.value/etc. and relying on the
+    // value-changed callback BindOffsetRow registers (setValue, e.g. SetHeading/SetRoll) to cascade
+    // the write, the way this used to work: Unity's FloatField only raises its ChangeEvent when the
+    // new value differs from whatever it last displayed, so that approach silently no-ops whenever a
+    // mode's remembered angle happens to equal the previous mode's - leaving SASManager.Z stuck on a
+    // stale value from the mode just left. This bit Roll specifically once it gained a second widget
+    // (_hoverZValue, for Hover's own Roll row): editing Roll while in Hover updates _hoverZValue + Z,
+    // but _zValue's own cached "last displayed" value doesn't move, so switching to a normal mode
+    // whose stored Roll happened to coincide with THAT stale cache would silently fail to restore
+    // the real value into Z. Writing SASManager.X/Y/Z here directly, then pushing to the fields via
+    // SetValueWithoutNotify (so this doesn't also re-trigger the value-changed callback and re-store
+    // the same value a second time), sidesteps the whole class of bug.
     private void ApplyStoredOffsetsForCurrentMode()
     {
         if (!Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))
@@ -1048,76 +1002,5 @@ public class MainWindowController : MonoBehaviour
             _settingsContainer.style.display = _settingsOpen ? DisplayStyle.Flex : DisplayStyle.None;
     }
 
-    private void OnXToggleClicked(ClickEvent evt)
-    {
-        if (_xToggle.IsToggled)
-        {
-            SASManager.Instance.XEnabled = true;
-        }
-        else
-        {
-            SASManager.Instance.XEnabled = false;
-        }
-    }
-
-    private void OnYToggleClicked(ClickEvent evt)
-    {
-        if (_yToggle.IsToggled)
-        {
-            SASManager.Instance.YEnabled = true;
-        }
-        else
-        {
-            SASManager.Instance.YEnabled = false;
-        }
-    }
-
-    private void OnZToggleClicked(ClickEvent evt)
-    {
-        if (_zToggle.IsToggled)
-        {
-            SASManager.Instance.ZEnabled = true;
-        }
-        else
-        {
-            SASManager.Instance.ZEnabled = false;
-        }
-    }
-
-    private void OnXChanged(ChangeEvent<float> evt)
-    {
-        SASManager.Instance.X = evt.newValue;
-        if (Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))
-            offsets.Heading.Value = evt.newValue;
-    }
-
-    private void OnYChanged(ChangeEvent<float> evt)
-    {
-        SASManager.Instance.Y = evt.newValue;
-        if (Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))
-            offsets.Pitch.Value = evt.newValue;
-    }
-
-    private void OnZChanged(ChangeEvent<float> evt)
-    {
-        SASManager.Instance.Z = evt.newValue;
-        if (Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))
-            offsets.Roll.Value = evt.newValue;
-    }
-
-    // Hover's own Roll row - see the field comment on _hoverZToggle. Drives its own
-    // SASManager.HoverRollEnabled (NOT the shared ZEnabled) plus the shared Z/
-    // Settings.AttitudeOffsets[Hover].Roll, same as OnZToggleClicked/OnZChanged.
-    private void OnHoverZToggleClicked(ClickEvent evt)
-    {
-        SASManager.Instance.HoverRollEnabled = _hoverZToggle.IsToggled;
-    }
-
-    private void OnHoverZChanged(ChangeEvent<float> evt)
-    {
-        SASManager.Instance.Z = evt.newValue;
-        if (Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))
-            offsets.Roll.Value = evt.newValue;
-    }
 }
 }

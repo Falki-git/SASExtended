@@ -26,7 +26,7 @@ called out inline.
 | 6 | NOT STARTED | A full config file write on every click in the window | Perf |
 | 7 | DONE | Per-frame waste in `LandingPredictionManager` | Perf |
 | 8 | DONE | Replace the ~300-line `SetRotation` switch with a registry | Structure |
-| 9 | NOT STARTED | Extract the (now four times) duplicated offset row | Structure |
+| 9 | DONE | Extract the (now four times) duplicated offset row | Structure |
 | 10 | NOT STARTED | Move the landing predictor's math into `PureMath/` | Structure |
 
 ---
@@ -323,6 +323,26 @@ buttons, two preset buttons, ~200 lines — differing only in element-name prefi
 **Recommendation:** a `BindOffsetRow(container, prefix, getter, setter, enabledFlag)` helper.
 Hover's row differs only in which enabled-flag it drives (`HoverRollEnabled` vs the shared
 `ZEnabled`) — which is exactly a parameter.
+
+> **Implemented, with the tab handlers left out of scope:** added
+> `(SideToggleControl Toggle, FloatField Value) BindOffsetRow(container, prefix, setValue,
+> setEnabledFlag, secondPreset)` — wires the toggle/value/±/first/second elements under `container`
+> named `<prefix>-toggle`/`-value`/`-minus`/`-plus`/`-first`/`-second`, and returns just the
+> toggle+value pair, since those are the only two widgets any other method (`UpdateAttitudeColors`,
+> `ApplyStoredOffsetsForCurrentMode`, `OnSasManagerDisengaged`, `UpdatePanelForMode`) still needs
+> after wiring — the ± /preset buttons are now local variables inside `BindOffsetRow` itself rather
+> than class fields, since nothing ever read them back (that includes six already-dead
+> `_x/y/zFirst/SecondSpecialButton` fields discovered while doing this, never wired at all —
+> removed). Named `setValue`/`setEnabledFlag`/`secondPreset` rather than the doc's literal
+> `getter`/`setter` shorthand, since nothing needs to *read* a row's current value at bind time —
+> only write it (on change) and supply the "second" preset button's target (a fixed 90° for
+> Heading/Pitch, the vessel's live current roll for both Roll rows). `SetRoll`/`CurrentRollPreset`
+> are literally the same two delegates passed to both the shared Roll row and Hover's own Roll row —
+> the exact case the bug-prevention note above was about, now structurally a single shared
+> implementation instead of two that can drift. Net: -117 lines. The four tab handlers mentioned in
+> the same paragraph were left alone — the recommendation itself only prescribed `BindOffsetRow`,
+> and unifying them would need a second, differently-shaped helper (index-based container/toggle
+> arrays) not part of this ask.
 
 ### 10. Move the landing predictor's math into `PureMath/`
 `LandingPredictionManager.cs` — `IntegrateStep`, `Acceleration`, `Derotate`, `MarchToImpact`
