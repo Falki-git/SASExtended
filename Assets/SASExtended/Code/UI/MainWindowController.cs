@@ -83,6 +83,17 @@ public class MainWindowController : MonoBehaviour
     private Button _hoverVerticalVelocityZero;
     private SideToggleControl _cancelHorizontalVelocityToggle;
 
+    // Hover's own Roll row - shares the target angle (SASManager.Z) with the shared attitude panel's
+    // Roll row (_zToggle/_zValue below), but drives its OWN enabled flag (SASManager.HoverRollEnabled,
+    // not the shared ZEnabled - see its field comment for why) since Hover's panel replaces the
+    // shared one entirely. Kept in sync at the panel-switch boundary - see UpdatePanelForMode.
+    private SideToggleControl _hoverZToggle;
+    private FloatField _hoverZValue;
+    private Button _hoverZMinus;
+    private Button _hoverZPlus;
+    private Button _hoverZFirst;
+    private Button _hoverZSecond;
+
     // Flight Axes visual toggles are wired in a loop over FlightAxesVisualizer.ToggleIds (see
     // WireFlightAxesToggles) - they're independent of the mutually-exclusive mode toggles above, so
     // they don't need individual fields or a place in _allModeToggles.
@@ -381,7 +392,7 @@ public class MainWindowController : MonoBehaviour
         _zSecond = _root.Q<Button>("z-second");
         _zSecond.RegisterCallback<ClickEvent>(evt =>
         {
-            _zValue.value = 180;
+            _zValue.value = Mathf.Round((float)SASManager.Instance.CurrentRollOffset);
         });
 
 
@@ -422,6 +433,32 @@ public class MainWindowController : MonoBehaviour
         _cancelHorizontalVelocityToggle.RegisterCallback<ClickEvent>(evt =>
         {
             SASManager.Instance.CancelHorizontalVelocity = _cancelHorizontalVelocityToggle.IsToggled;
+        });
+
+        _hoverZToggle = _hoverControlsContainer.Q<SideToggleControl>("hover-z-toggle");
+        _hoverZToggle.RegisterCallback<ClickEvent>(OnHoverZToggleClicked);
+        _hoverZValue = _hoverControlsContainer.Q<FloatField>("hover-z-value");
+        _hoverZValue.RegisterValueChangedCallback(OnHoverZChanged);
+
+        _hoverZMinus = _hoverControlsContainer.Q<Button>("hover-z-minus");
+        _hoverZMinus.RegisterCallback<ClickEvent>(evt =>
+        {
+            _hoverZValue.value--;
+        });
+        _hoverZPlus = _hoverControlsContainer.Q<Button>("hover-z-plus");
+        _hoverZPlus.RegisterCallback<ClickEvent>(evt =>
+        {
+            _hoverZValue.value++;
+        });
+        _hoverZFirst = _hoverControlsContainer.Q<Button>("hover-z-first");
+        _hoverZFirst.RegisterCallback<ClickEvent>(evt =>
+        {
+            _hoverZValue.value = 0;
+        });
+        _hoverZSecond = _hoverControlsContainer.Q<Button>("hover-z-second");
+        _hoverZSecond.RegisterCallback<ClickEvent>(evt =>
+        {
+            _hoverZValue.value = Mathf.Round((float)SASManager.Instance.CurrentRollOffset);
         });
 
         // Match the containers' initial visibility/colors to the starting (non-hover, no-mode) state.
@@ -629,18 +666,37 @@ public class MainWindowController : MonoBehaviour
         });
     }
 
-    // Loads the just-engaged mode's remembered Heading/Pitch/Roll (Settings.AttitudeOffsets) into the
-    // x/y/z FloatFields, which cascades into SASManager.X/Y/Z via OnXChanged/OnYChanged/OnZChanged
-    // below. Modes without a stored entry (OFF, KillRot, Hover - see Settings.AttitudeOffsets) leave
-    // the fields untouched, since none of them use the generic offset mechanism.
+    // Loads the just-engaged mode's remembered Heading/Pitch/Roll (Settings.AttitudeOffsets) directly
+    // into SASManager.X/Y/Z, then pushes the same numbers into the FloatFields for display. Modes
+    // without a stored entry (OFF, KillRot - see Settings.AttitudeOffsets) leave everything untouched,
+    // since neither uses the generic offset mechanism at all. Hover only cares about Roll
+    // (Heading/Pitch go unused) and has its own Roll widget (_hoverZValue) alongside the shared one.
+    //
+    // Deliberately does NOT set SASManager.X/Y/Z by assigning _xValue.value/etc. and relying on
+    // OnXChanged/OnYChanged/OnZChanged to cascade the write, the way this used to work: Unity's
+    // FloatField only raises its ChangeEvent when the new value differs from whatever it last
+    // displayed, so that approach silently no-ops whenever a mode's remembered angle happens to
+    // equal the previous mode's - leaving SASManager.Z stuck on a stale value from the mode just
+    // left. This bit Roll specifically once it gained a second widget (_hoverZValue, for Hover's
+    // own Roll row): editing Roll while in Hover updates _hoverZValue + Z, but _zValue's own cached
+    // "last displayed" value doesn't move, so switching to a normal mode whose stored Roll happened
+    // to coincide with THAT stale cache would silently fail to restore the real value into Z.
+    // Writing SASManager.X/Y/Z here directly, then pushing to the fields via SetValueWithoutNotify
+    // (so this doesn't also trigger OnXChanged/OnYChanged/OnZChanged and re-store the same value a
+    // second time), sidesteps the whole class of bug.
     private void ApplyStoredOffsetsForCurrentMode()
     {
         if (!Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))
             return;
 
-        _xValue.value = offsets.Heading.Value;
-        _yValue.value = offsets.Pitch.Value;
-        _zValue.value = offsets.Roll.Value;
+        SASManager.Instance.X = offsets.Heading.Value;
+        SASManager.Instance.Y = offsets.Pitch.Value;
+        SASManager.Instance.Z = offsets.Roll.Value;
+
+        _xValue.SetValueWithoutNotify(offsets.Heading.Value);
+        _yValue.SetValueWithoutNotify(offsets.Pitch.Value);
+        _zValue.SetValueWithoutNotify(offsets.Roll.Value);
+        _hoverZValue.SetValueWithoutNotify(offsets.Roll.Value);
     }
 
     private void ClearAllModeToggles(SideToggleControl except)
@@ -652,10 +708,11 @@ public class MainWindowController : MonoBehaviour
         }
     }
 
-    // Hover is the only mode with its own control panel (vertical-speed target + horizontal-velocity
-    // cancel toggle) in place of the shared Heading/Pitch/Roll attitude-controls panel - swap which one
-    // is visible. Only called when a real mode is being engaged (see RegisterModeButton) - turning a
-    // mode off (falling back to OFF) intentionally leaves the previously-visible panel alone.
+    // Hover is the only mode with its own control panel (vertical-speed target, horizontal-velocity
+    // cancel toggle, and its own Roll row) in place of the shared Heading/Pitch/Roll attitude-controls
+    // panel - swap which one is visible. Only called when a real mode is being engaged (see
+    // RegisterModeButton) - turning a mode off (falling back to OFF) intentionally leaves the
+    // previously-visible panel alone.
     private void UpdatePanelForMode()
     {
         // SASManager.Instance is still null the very first time this runs: SceneController.Initialize
@@ -667,6 +724,19 @@ public class MainWindowController : MonoBehaviour
         bool isHover = SASManager.Instance != null && SASManager.Instance.IsHoverActive;
         _hoverControlsContainer.style.display = isHover ? DisplayStyle.Flex : DisplayStyle.None;
         _attitudeControlsContainer.style.display = isHover ? DisplayStyle.None : DisplayStyle.Flex;
+
+        // Hover's Roll row and the shared attitude panel's Roll row each drive their OWN enabled flag
+        // (HoverRollEnabled vs. the shared ZEnabled - see HoverRollEnabled's field comment for why).
+        // Only one row is ever visible/interactive at a time, so keep whichever one is about to
+        // become visible in sync with its backing flag (SwitchToggleState(..., false) so this
+        // doesn't re-fire the click handler and write the value right back to itself). The target
+        // angle itself doesn't need syncing here - ApplyStoredOffsetsForCurrentMode (called right
+        // before this) already pushed it into both Roll widgets directly.
+        if (SASManager.Instance != null)
+        {
+            var rollToggle = isHover ? _hoverZToggle : _zToggle;
+            rollToggle.SwitchToggleState(isHover ? SASManager.Instance.HoverRollEnabled : SASManager.Instance.ZEnabled, false);
+        }
     }
 
     // Heading/Pitch/Roll share the color of whichever ORB family is currently active, so they read as
@@ -914,6 +984,21 @@ public class MainWindowController : MonoBehaviour
     }
 
     private void OnZChanged(ChangeEvent<float> evt)
+    {
+        SASManager.Instance.Z = evt.newValue;
+        if (Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))
+            offsets.Roll.Value = evt.newValue;
+    }
+
+    // Hover's own Roll row - see the field comment on _hoverZToggle. Drives its own
+    // SASManager.HoverRollEnabled (NOT the shared ZEnabled) plus the shared Z/
+    // Settings.AttitudeOffsets[Hover].Roll, same as OnZToggleClicked/OnZChanged.
+    private void OnHoverZToggleClicked(ClickEvent evt)
+    {
+        SASManager.Instance.HoverRollEnabled = _hoverZToggle.IsToggled;
+    }
+
+    private void OnHoverZChanged(ChangeEvent<float> evt)
     {
         SASManager.Instance.Z = evt.newValue;
         if (Settings.AttitudeOffsets.TryGetValue(SASManager.Instance.AttitudeMode, out var offsets))

@@ -47,7 +47,7 @@ namespace SASExtended.Utilities
             AttitudeMode.TargetRvelPlus, AttitudeMode.TargetRvelMinus,
             AttitudeMode.TargetParPlus, AttitudeMode.TargetParMinus,
             AttitudeMode.SpecialStarPlus, AttitudeMode.SpecialStarMinus,
-            AttitudeMode.Hold
+            AttitudeMode.Hold, AttitudeMode.Hover
         };
 
         // Remembered Hover vertical velocity - session-only, see the comment on AttitudeOffsets above.

@@ -119,11 +119,16 @@ appbar toggle button. Layout, top → bottom:
   - **TGT:** TGT+, TGT−, R VEL+, R VEL−, PAR+, PAR− (all six greyed out with no target selected).
   - **SPEC:** Star+, Star− (parent-star pointing), `HOLD` (inertial hold), HOVER.
 - **Offset rows (3):** `Heading`, `Pitch`, `Roll`. Each row = a per-axis enable toggle (green LED)
-  + a numeric field (degrees) + `−`/`+` nudge buttons + two presets (`0` and `90`/`90`/`180`, Roll's
-  second preset being 180°). Applied live as they change — no EXECUTE button. Per-mode H/P/R values
+  + a numeric field (degrees) + `−`/`+` nudge buttons + two presets (`0` and `90`/`90`/`CUR`, Roll's
+  second preset reading the vessel's current actual roll — `SASManager.CurrentRollOffset`, updated
+  every tick regardless of whether roll is currently locked — and setting that as the new target).
+  Applied live as they change — no EXECUTE button. Per-mode H/P/R values
   are remembered for the session (`Settings.AttitudeOffsets`) and reapplied when you switch back to
-  that mode. Swapped out entirely for **Hover's own panel** (target vertical speed + cancel-drift
-  toggle) while Hover is active.
+  that mode. Swapped out for **Hover's own panel** (target vertical speed + cancel-drift toggle +
+  its own Roll row, sharing the target angle field `Z` with the shared Roll row but driving its
+  own enable flag `HoverRollEnabled` rather than the shared `ZEnabled` — so toggling Roll off/on in
+  one mode never bleeds into another's — and defaulting to off) while Hover is active; only
+  Heading/Pitch drop away there, since Hover pins those to the thrust direction.
 - **SAS mode color coding:** each ORB direction button's LED has an intrinsic color family
   (Prograde/Retrograde share one, Normal/AntiNormal another, Radial In/Out a third); the
   Heading/Pitch/Roll toggles pick up whichever family is currently active so offsets visually read
@@ -146,8 +151,9 @@ across every pointing mode via one `LockRotation` per tick:
   that value straight back, so the autopilot applies ~no torque there and the vessel drifts freely
   on that axis (mirrors vanilla SAS's own `SetTargetOrientation`, which likewise only constrains
   2 DOF and leaves roll uncontrolled).
-- `Hover` only ever exposes **Roll** to this mechanism — heading/pitch are pinned to the thrust
-  direction and aren't user-configurable there.
+- `Hover` only ever exposes **Roll** to this mechanism (via its own panel's Roll row, not the shared
+  one — see the UI design section above) — heading/pitch are pinned to the thrust direction and
+  aren't user-configurable there.
 
 ## Flight Axes visuals (settings panel)
 
