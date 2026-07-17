@@ -130,6 +130,13 @@ splitting `OnEnable` so one failed section can't take out the rest.
 > toggle for the same reason. The three call sites that already null-guarded themselves
 > (`WireFlightAxesToggles`, `WireLandingPredictionToggle`, `WireSettingsButton`) were left as-is and
 > are now just invoked through the same `WireSection` wrapper for consistency.
+>
+> **Follow-up (pre-merge sweep):** `SetToggleAvailability` (called every frame from `Update()` via
+> `UpdateNodeTargetAvailability`), `UpdateStatusLabel`, and `OnSasManagerDisengaged` still
+> unconditionally dereferenced `_nodeToggle`/`_statusLabel`/`_offToggle`/`_xValue`/etc. after the
+> above landed - a missing element there would go from one clear startup crash (pre-refactor) to a
+> repeating per-frame/per-event NRE (post-refactor), the opposite of this recommendation's intent.
+> Added guards to all three.
 
 ### 4. Event + singleton lifecycle asymmetry
 `MainWindowController.cs:504-507`, `SASManager.cs:17`

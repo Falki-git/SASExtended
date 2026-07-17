@@ -613,9 +613,14 @@ public class MainWindowController : MonoBehaviour
     // SideToggleControl.SetEnabled() unconditionally forces the toggle off as a side effect of
     // re-applying its disabled/unchecked visuals - calling it every frame regardless of a real change
     // would fight the toggle state RegisterModeButton/OnSasManagerDisengaged just set elsewhere. Only
-    // call it on an actual availability change.
+    // call it on an actual availability change. toggle is null when its UXML element failed to
+    // resolve (see Require<T>/WireSection) - called every frame from Update() via
+    // UpdateNodeTargetAvailability, so without this guard a single missing element would NRE every
+    // frame instead of the one-time error Require<T> already logged.
     private static void SetToggleAvailability(SideToggleControl toggle, bool available)
     {
+        if (toggle == null)
+            return;
         if (toggle.IsEnabled != available)
             toggle.SetEnabled(available);
     }
@@ -625,14 +630,17 @@ public class MainWindowController : MonoBehaviour
     // manual OFF click does (RegisterModeButton's else branch) so the window doesn't keep showing a
     // mode/offsets that are no longer actually engaged. Unlike that manual path, we don't know which
     // toggle was previously active, so ClearAllModeToggles runs unconditionally rather than relying on
-    // every other toggle already being off.
+    // every other toggle already being off. Fields are null-checked individually (rather than bailing
+    // out entirely on the first miss) since ClearAllModeToggles already tolerates nulls in
+    // _allModeToggles - a UXML element failing to resolve for one field shouldn't stop this handler
+    // from updating whichever others did resolve.
     private void OnSasManagerDisengaged()
     {
         ClearAllModeToggles(_offToggle);
-        _offToggle.SwitchToggleState(true, false);
-        _xValue.value = 0;
-        _yValue.value = 0;
-        _zValue.value = 0;
+        _offToggle?.SwitchToggleState(true, false);
+        if (_xValue != null) _xValue.value = 0;
+        if (_yValue != null) _yValue.value = 0;
+        if (_zValue != null) _zValue.value = 0;
         UpdateAttitudeColors();
     }
 
@@ -644,6 +652,12 @@ public class MainWindowController : MonoBehaviour
     // pipeline.
     private void UpdateStatusLabel()
     {
+        // _statusLabel is null when its UXML element failed to resolve (see Require<T>/WireSection) -
+        // called every StatusRefreshInterval from Update(), so without this guard a missing element
+        // would NRE repeatedly instead of the one-time error Require<T> already logged.
+        if (_statusLabel == null)
+            return;
+
         var sas = SASManager.Instance;
         if (sas == null || sas.AttitudeMode == AttitudeMode.None)
         {
