@@ -60,12 +60,9 @@ public class LandingPredictionManager : MonoBehaviour
 
     private const float LineWidthMeters = 0.6f;
     private const float MarkerRadiusMeters = 5f;
-    // The line's world-space width naturally reads as thinner the farther a point is from the
-    // camera (perspective) - desirable, since it reads as "receding into the distance." But a
-    // fixed world-space width can shrink below what the GPU rasterizes at all once a point gets
-    // far enough away, making the line vanish rather than just look thin. Floor each vertex's
-    // width to whatever world size subtends this many screen pixels at that vertex's distance
-    // (a little over the literal 1px floor requested, as a safety margin against AA/rounding).
+    // Floor each vertex's width to whatever world size subtends this many screen pixels at that
+    // vertex's distance, so perspective thinning is preserved but the line never rasterizes below
+    // visibility - see landing_prediction_fixes.md round 11.
     private const float MinLineWidthPixels = 1.5f;
     // Ring/crosshair line thickness for the impact marker reticle - see ReticleMarker.
     private const float MarkerLineThicknessMeters = 0.4f;
@@ -82,12 +79,9 @@ public class LandingPredictionManager : MonoBehaviour
     // The trajectory as computed at the last recompute, stored as DE-ROTATED OFFSETS from the
     // vessel's own compute-time position (not absolute positions). Rendered every frame by adding
     // these offsets to the vessel's freshly re-queried CURRENT position - converting an offset via
-    // VectorToPhysics is immune to whatever floating-origin re-basing PositionToPhysics does
-    // between recomputes for an absolute position, which was the actual cause of the "line drifts
-    // away from the vessel, then snaps back at every recompute" bug: the vessel's own on-screen
-    // position is re-anchored every frame by the game, while a cached absolute PositionToPhysics
-    // result was not - anchoring every rendered point to the vessel's current position directly
-    // sidesteps that mismatch regardless of its exact underlying cause.
+    // VectorToPhysics is immune to whatever floating-origin re-basing PositionToPhysics does to an
+    // absolute position between recomputes. See landing_prediction_fixes.md rounds 9-10 for the
+    // floating-origin drift bug this avoids - don't "simplify" back to caching absolute positions.
     private Vector3d[] _sampleOffsets;
     // How many leading entries of the array above are valid this recompute - impact is usually
     // found well before MarchSteps samples, and the array is fixed-size (reused every recompute)
@@ -173,11 +167,9 @@ public class LandingPredictionManager : MonoBehaviour
     // increasingly wrong through an actual reentry.
     //
     // Deliberately NOT sampled via PatchedConicsOrbit.GetTruePositionAtUT (analytic Kepler-anomaly
-    // position reconstruction): confirmed in-game that formula is numerically unreliable for
-    // near-radial/near-zero-angular-momentum orbits (eccentricity pinned near 1.000, periapsis
-    // reported near the body's center) - exactly the regime a landing predictor spends most of its
-    // time in. orbit.localPosition/relativeVelocity (the tracked, not reconstructed, current state)
-    // don't share that failure mode, so integrate forward from there instead.
+    // position reconstruction) - unreliable for the near-radial, near-zero-angular-momentum orbits
+    // this predictor always deals with (see landing_prediction_fixes.md round 1). Integrates forward
+    // from the live tracked state vector (orbit.localPosition/relativeVelocity) instead.
     private void RecomputeTrajectory()
     {
         _hasValidPrediction = false;
@@ -225,13 +217,9 @@ public class LandingPredictionManager : MonoBehaviour
 
         // Bound the search: a closed orbit gets at most one full period; a hyperbolic/parabolic
         // one has no period, so fall back to a fixed horizon. Computed here from the live state
-        // vector via vis-viva rather than read from orbit.period/orbit.eccentricity - confirmed
-        // in-game that the orbit's own analytic elements become unreliable/unstable for the
-        // near-radial, near-zero-angular-momentum orbits this predictor spends a lot of time in
-        // (periapsis reported at/near the body's center), which was bleeding into this search's
-        // sampling resolution and causing the "first crossing found" to intermittently jump
-        // between two nearby candidates (e.g. a terrain bump vs. the true final impact) between
-        // recomputes despite a smoothly-evolving real trajectory.
+        // vector via vis-viva rather than read from orbit.period/orbit.eccentricity, which are
+        // unreliable for this predictor's near-radial orbits - see landing_prediction_fixes.md
+        // round 8.
         double specificEnergy = 0.5 * startVel.sqrMagnitude - mu / startPos.magnitude;
         double horizon;
         if (specificEnergy < 0.0)
@@ -246,16 +234,10 @@ public class LandingPredictionManager : MonoBehaviour
         if (!(horizon > 0.0) || double.IsInfinity(horizon))
             horizon = 6.0 * 3600.0;
         double upperUt = now + horizon;
-        // orbit.EndUT is the game's OWN patched-conic solution boundary. When that boundary is a
-        // Collision transition, PatchedConics.WillCollideWithParent computed it by bisecting
-        // orbit.GetRelativePositionAtUT for a terrain crossing - the exact same analytic
-        // Kepler-anomaly reconstruction already shown (see the horizon comment above) to be
-        // unreliable in this predictor's near-radial regime. Trusting it here clipped the search
-        // horizon short of the real RK4-computed impact time on longer/higher falls, which is why
-        // the whole prediction would intermittently vanish above a few thousand meters (the coarse
-        // pass found "no crossing" before ever reaching the true one). Still respect EndUT for
-        // transitions our own single-body integrator can't model anyway (SOI encounter/escape) -
-        // just never for the game's own (unreliable) collision guess.
+        // orbit.EndUT is the game's OWN patched-conic solution boundary, but for a Collision
+        // transition it comes from the same unreliable Kepler-anomaly reconstruction as above - see
+        // landing_prediction_fixes.md round 12. Still respect EndUT for transitions this integrator
+        // can't model anyway (SOI encounter/escape), just never the game's own collision guess.
         if (orbit.PatchEndTransition != PatchTransitionType.Collision && orbit.EndUT > now && orbit.EndUT < upperUt)
             upperUt = orbit.EndUT;
         if (upperUt <= now)
@@ -274,9 +256,9 @@ public class LandingPredictionManager : MonoBehaviour
 
         // Ground-height correction for "scenery" (KSC's runway/buildings) sitting above the raw PQS
         // terrain mesh - sampled ONCE here, at the vessel's own live position, and held constant for
-        // the whole recompute. See landing_prediction_fixes.md (KSC runway rounds) for why - the
-        // short version being that re-querying sceneryOffset at future/derotated points is unreliable
-        // near the ground, but it's smooth/stable enough at a live position to use as-is.
+        // the whole recompute (re-querying sceneryOffset at future/derotated points is unreliable
+        // near the ground, but it's smooth/stable enough at a live position). See
+        // landing_prediction_fixes.md rounds 14-16.
         body.GetAltitudeFromTerrain(new Position(frame, startPos), out var rawTerrainAtVessel, out var sceneryOffsetAtVessel);
         double groundCorrection = -sceneryOffsetAtVessel;
         double altAtNow = rawTerrainAtVessel + groundCorrection;
@@ -337,8 +319,7 @@ public class LandingPredictionManager : MonoBehaviour
         if (Settings.VerboseLoggingEnabled.Value)
         {
             // lat/lon (2 decimals) can't resolve meter-scale wobble on a 600km-radius body -
-            // log the raw local-frame numbers instead so a repeat of this can pin down whether
-            // the *input* (startVel) or the *computation* (impactPos) is what's actually moving.
+            // log the raw local-frame numbers instead.
             Vector3d up = startPos.normalized;
             Vector3d horizontalDelta = impactOffset - up * Vector3d.Dot(impactOffset, up);
             double vertVel = Vector3d.Dot(startVel, up);
@@ -393,16 +374,11 @@ public class LandingPredictionManager : MonoBehaviour
             double alt = AltitudeAt(body, frame, derotated, groundCorrection);
             if (alt <= 0.0)
             {
-                // The straight-line segment between the last two samples is a fine approximation
-                // of the true (continuous) path over such a short RK4 step, but terrain height is
-                // NOT guaranteed to vary linearly along it - a boulder or ridge crossed between
-                // the two samples (common on rubbly/asteroid-like terrain, and more likely the
-                // faster the vessel's horizontal speed, since each step then covers more ground)
-                // can make a single-shot linear-interpolation guess land the "impact" point on the
-                // far side of that feature, embedded underground, instead of right at its surface.
-                // Bisect along the segment instead, re-querying the actual terrain altitude at
-                // each candidate, so the final point converges onto wherever the surface actually
-                // is regardless of how it varies between the two samples.
+                // Terrain height isn't guaranteed to vary linearly between the last two samples (a
+                // boulder or ridge can sit between them), so a single linear-interpolation guess can
+                // land "impact" on the far side of that feature, embedded underground - see
+                // landing_prediction_fixes.md round 13. Bisect instead, re-querying the actual
+                // terrain altitude at each candidate.
                 Vector3d hiOffset = offset;
                 double loAlt = prevAlt, hiAlt = alt;
                 double loFrac = 0.0, hiFrac = 1.0;
@@ -550,7 +526,7 @@ public class LandingPredictionManager : MonoBehaviour
         _line.widthMultiplier = 1f;
         _line.widthCurve = new AnimationCurve(widthKeys);
         // Read every frame (not cached) so a color-picker change in the settings menu applies
-        // immediately - see the field comment above the (now-removed) color constants.
+        // immediately.
         var lineColor = Settings.LandingPredictionLineColor.Value;
         _line.startColor = lineColor;
         _line.endColor = lineColor;

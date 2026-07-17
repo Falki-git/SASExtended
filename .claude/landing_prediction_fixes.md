@@ -116,7 +116,43 @@ guarantees the line's start point always exactly coincides with wherever the gam
 vessel this frame, regardless of the floating origin's exact re-anchoring behavior. **Confirmed
 fixed in-game** — smooth curve, correct baseline for near-zero horizontal velocity, no drift/snap.
 
-**Round 11 — KSC runway impact marker rendered underground; `GetAltitudeFromTerrain`'s
+**Round 11 — trajectory line fades to invisible at distance.** Unity's `LineRenderer` draws width
+in fixed world-space units; perspective naturally (and desirably) makes a fixed-width line read
+thinner farther from the camera, but once a point gets far enough away its world-space width
+subtends less than one screen pixel and the GPU rasterizer drops that geometry outright instead of
+rendering it merely faint. Confirmed by decompiling the actual installed Unity Editor's own
+`UnityEngine.CoreModule.dll` that this Unity version's `LineRenderer` has no per-vertex `SetWidths`
+method, only `widthCurve`. **Fix:** rebuild a `widthCurve` every frame (one `Keyframe` per vertex)
+that floors each vertex's width to whatever world size subtends `MinLineWidthPixels` (1.5) screen
+pixels at that vertex's actual distance from the flight camera
+(`GameManager...CameraManager.GetCameraRenderStack(CameraID.Flight,
+RenderSpaceType.PhysicsSpace).GetMainRenderCamera()`), so perspective thinning is preserved but the
+line never rasterizes below the visibility floor. **Confirmed fixed in-game.**
+
+**Round 12 — trajectory line/marker vanish entirely above a few thousand meters altitude.** The
+coarse search's horizon was being clamped to `orbit.EndUT` whenever the orbit's own
+`PatchEndTransition` was `Collision` - but that value comes from
+`PatchedConics.WillCollideWithParent`, which bisects the SAME analytic Kepler-anomaly
+reconstruction (`orbit.GetRelativePositionAtUT`) already shown unreliable in this predictor's
+near-radial regime (round 1). For a higher/longer fall, that native estimate under-ran the true
+RK4-computed impact time, clipping the search horizon short so the coarse pass reported "no
+crossing found" before ever reaching the real one - a total disappearance of both line and marker.
+**Fix:** only respect `orbit.EndUT` as a horizon bound for transitions the single-body integrator
+genuinely can't model itself (SOI encounter/escape), never for the game's own (unreliable)
+`Collision` guess. **Confirmed fixed in-game.**
+
+**Round 13 — impact marker occasionally rendering underground on rugged/bouldery terrain.**
+`MarchToImpact` estimated the exact impact point by linearly interpolating between the last two
+RK4 samples' altitude values, implicitly assuming terrain height varies linearly between them. On
+rugged (rubbly/asteroid-like) terrain with meaningful horizontal velocity, a single fine-pass step
+can cover enough ground to skip over a boulder or ridge between the two samples, landing the
+linear-interpolation guess on the far side of that feature - embedded underground instead of at its
+true surface. **Fix:** replaced the single linear guess with a 20-iteration (`ImpactBisectionIterations`)
+bisection that re-queries the actual terrain altitude at each candidate point along the segment,
+converging onto wherever the surface genuinely is regardless of how it varies between the two
+samples. **Confirmed fixed in-game.**
+
+**Round 14 — KSC runway impact marker rendered underground; `GetAltitudeFromTerrain`'s
 `sceneryOffset` out-param wasn't accounted for at all.** `GetAltitudeFromTerrain` returns
 `terrainAltitude` (height above the raw PQS terrain mesh) and a separate `sceneryOffset` for
 built structures (KSC's runway/buildings) sitting above/instead of that raw mesh — the code was
@@ -133,7 +169,7 @@ next and also didn't help — **reverted**, since the true offset turned out to 
 location (a separate debug overlay measured ~277m at one runway spot vs. the ~8.9m logged at
 another) for a single cached "last good value" to reliably apply near touchdown either.
 
-**Round 12 — `Physics.Raycast`-based ground truth: fixed the underground marker, but introduced
+**Round 15 — `Physics.Raycast`-based ground truth: fixed the underground marker, but introduced
 new problems.** Real collision geometry (layers `Physx.Terrain`/`Physx.Scenery`/`Local.Terrain`/
 `Local.Scenery`/`Internal.Scenery`/`KSCBuildings`, from `ProjectSettings/TagManager.asset`) is
 ground truth for "what would the vessel actually land on," sidestepping `GetAltitudeFromTerrain`'s
@@ -145,16 +181,16 @@ flagged two side effects: a performance concern about raycasting every recompute
 "twitching" in the rendered marker, since the raycast's origin depended on the coarse pass's
 impact estimate, which shifts slightly between recomputes even for an otherwise-steady vessel.
 
-**Round 13 — the actual fix: sample `GetAltitudeFromTerrain` once at the vessel's own LIVE
+**Round 16 — the actual fix: sample `GetAltitudeFromTerrain` once at the vessel's own LIVE
 position, not the raycast.** Added extensive comparison logging (vessel's own official telemetry —
 `AltitudeFromTerrain`/`AltitudeFromScenery`/`AltitudeFromSurface`/`AltitudeFromRadius` — vs. our own
 `GetAltitudeFromTerrain` calls at the vessel's position, at the coarse pass's rough impact point,
-and the round-12 raycast result) and had the user fly a structured test: a fixed-altitude hover,
+and the round-15 raycast result) and had the user fly a structured test: a fixed-altitude hover,
 then a slow horizontal pass along the runway, then a slow vertical descent to touchdown, all with
 verbose logging on. The `Player.log` data showed: (1) `sceneryOffset` queried at the vessel's own
 *real* current position **never once collapsed to 0** across 1321 logged samples, including all the
 way down to ~2m above the true ground during the slow descent — only future/derotated *hypothetical*
-query positions ever showed that collapse (round 11); (2) that value tracked the round-12 raycast's
+query positions ever showed that collapse (round 14); (2) that value tracked the round-15 raycast's
 answer closely even at the largest lateral distance in the test (~250m: worst-case ~20m difference,
 mean ~6.5m, against a ~230–280m correction — a small relative error). **Fix:** removed the
 `Physics.Raycast` entirely; `groundCorrection` is now `-sceneryOffset` from a single
@@ -168,7 +204,7 @@ position changes smoothly frame to frame, unlike the coarse pass's search-derive
 
 - **`GetAltitudeFromTerrain`'s `sceneryOffset` is only reliable queried at a real, live position -
   not at a hypothetical future/derotated one.** It silently collapses to 0 once a future-position
-  query point gets within a few meters of the true surface (rounds 11-13), but never showed that
+  query point gets within a few meters of the true surface (rounds 14-16), but never showed that
   failure sampled at the vessel's own current position, even down to ~2m of true altitude. Sample it
   ONCE per recompute at a live position and hold it constant rather than re-querying it at every
   march/bisection sample.
@@ -187,3 +223,11 @@ position changes smoothly frame to frame, unlike the coarse pass's search-derive
   latter does too (round 5/7), but for the *offset from the vessel*, not the absolute position
   (round 9/10) — don't conflate "does this need de-rotation" with "does this need to be anchored to
   a live reference," they're two separate axes of the same bug class.
+- **Never trust the game's own patched-conic boundary (`orbit.EndUT`) when it comes from a
+  `Collision` transition** (round 12) — it's derived from the same unreliable analytic Kepler-anomaly
+  reconstruction as `GetTruePositionAtUT` above, just one level removed. Fine to trust for transitions
+  this integrator can't model itself (SOI encounter/escape).
+- **A single linear-interpolation guess between two RK4 samples isn't enough to place the final
+  impact point** (round 13) — terrain isn't guaranteed to vary linearly between samples (boulders/
+  ridges), so bisect and re-query the actual terrain altitude at each candidate instead of trusting
+  the endpoints' altitude values alone.
