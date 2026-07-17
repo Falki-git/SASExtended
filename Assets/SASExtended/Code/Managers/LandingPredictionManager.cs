@@ -103,10 +103,13 @@ public class LandingPredictionManager : MonoBehaviour
     // Reused across frames instead of allocating a fresh Keyframe[] + AnimationCurve every render
     // frame (widths themselves DO need recomputing every frame - PixelWorldSize depends on
     // camera-to-vertex distance, which changes continuously - but the curve object and its backing
-    // array don't need to). _widthCurve's keys are updated in place via MoveKey each frame;
-    // _widthCurveKeyCount tracks how many keys it currently has, so a change in
-    // _trajectorySampleCount (only happens right after a recompute, not every frame - see its field
-    // comment) is the one case that still reallocates, rebuilding the curve to the new key count.
+    // array don't need to). _widthCurve's keys are updated in place via MoveKey each frame, then
+    // still has to be reassigned to _line.widthCurve every frame regardless - LineRenderer copies a
+    // curve's keyframe data on assignment rather than keeping a live reference to it, so mutating
+    // this object alone doesn't reach the renderer. _widthCurveKeyCount tracks how many keys it
+    // currently has, so a change in _trajectorySampleCount (only happens right after a recompute,
+    // not every frame - see its field comment) is the one case that still reallocates, rebuilding
+    // the curve to the new key count.
     private AnimationCurve _widthCurve;
     private int _widthCurveKeyCount;
 
@@ -550,8 +553,9 @@ public class LandingPredictionManager : MonoBehaviour
                 float t = _trajectorySampleCount > 1 ? (float)i / (_trajectorySampleCount - 1) : 0f;
                 widthKeys[i] = new Keyframe(t, 0f); // width filled in by the MoveKey loop below
             }
+            // Not assigned to _line.widthCurve here - the unconditional assignment after the loop
+            // below runs every frame regardless (see the comment there) and covers this case too.
             _widthCurve = new AnimationCurve(widthKeys);
-            _line.widthCurve = _widthCurve;
             _widthCurveKeyCount = _trajectorySampleCount;
         }
 
@@ -573,9 +577,14 @@ public class LandingPredictionManager : MonoBehaviour
         _line.SetPositions(_linePositionsBuffer);
         // LineRenderer has no per-vertex SetWidths in this Unity version - widthCurve is sampled
         // at each vertex's normalized position (0 at the first vertex, 1 at the last), so one
-        // keyframe per vertex gives an exact per-vertex width just like SetWidths would. _widthCurve
-        // is assigned to _line.widthCurve once above (on (re)creation) - its keys are updated in
-        // place, so no reassignment is needed here every frame.
+        // keyframe per vertex gives an exact per-vertex width just like SetWidths would.
+        // LineRenderer.widthCurve's setter copies the curve's keyframe data rather than keeping a
+        // live reference to the AnimationCurve object - mutating _widthCurve via MoveKey above does
+        // NOT by itself update what the renderer draws, so it still has to be reassigned every frame
+        // (confirmed in-game: without this, the line rendered at its placeholder 0-width forever).
+        // What the caching above actually saves is the Keyframe[]/AnimationCurve allocation, not
+        // this assignment.
+        _line.widthCurve = _widthCurve;
         _line.widthMultiplier = 1f;
         // Read every frame (not cached) so a color-picker change in the settings menu applies
         // immediately.
