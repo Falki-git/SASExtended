@@ -24,6 +24,22 @@ public class SASManager : MonoBehaviour
 
     public double X = 0, Y = 0, Z = 0;
     public bool XEnabled = true, YEnabled = true, ZEnabled = true;
+
+    // Hover's OWN Roll-enable flag, deliberately separate from the shared ZEnabled above (which
+    // every other mode uses). ZEnabled is session-persistent and carries over as-is between mode
+    // switches - forcing it off specifically when Hover engages (an earlier version of this) leaked
+    // into whatever mode you switched to next, turning Roll off there too. Defaults to false (Hover
+    // starts with roll free every time you engage it) without touching ZEnabled at all, so every
+    // other mode's Roll toggle keeps behaving exactly as before.
+    public bool HoverRollEnabled = false;
+
+    // The vessel's actual current roll, relative to whichever basis the active mode is pointing
+    // from - i.e. exactly what the "free" branch (ZEnabled/HoverRollEnabled) would already be
+    // tracking if Roll were disabled right now. Updated every tick by ApplyOffsets and
+    // AttitudeMode.Hover regardless of whether roll is currently locked, so the Roll row's CUR
+    // button can read it at any time and set Z to match - "lock in whatever roll I'm already at."
+    public double CurrentRollOffset;
+
     public AttitudeMode AttitudeMode = AttitudeMode.None;
     public bool IsHoverActive => AttitudeMode == AttitudeMode.Hover;
 
@@ -549,12 +565,12 @@ public class SASManager : MonoBehaviour
 
                 // Point the vessel's nose along the desired thrust vector directly via LookRotation
                 // (see the comment on AttitudeMode.OrbitPrograde). Heading/pitch aren't user-configurable
-                // in Hover, and neither is roll in practice - the hover-controls panel (see
-                // MainWindowController.UpdatePanelForMode) replaces the shared Heading/Pitch/Roll panel
-                // entirely and has no roll control of its own, so ZEnabled/Z here would just be
-                // whatever stale value was left over from the last non-Hover mode that did expose them.
-                // Roll is therefore always free (matches the vessel's own current roll every tick, same
-                // mechanism the shared panel's disabled-axis case uses) regardless of ZEnabled.
+                // in Hover - always straight along the thrust axis. Roll shares the same Z (target
+                // angle) as every other mode, but its OWN HoverRollEnabled flag rather than the shared
+                // ZEnabled (see HoverRollEnabled's field comment for why): locked to Z while enabled,
+                // free (tracks the vessel's own current roll every tick) while disabled. The
+                // hover-controls panel's own Roll toggle/field drives HoverRollEnabled/Z - see
+                // MainWindowController.UpdatePanelForMode.
                 //
                 // Up-hint is "north", NOT "upwards": "desired" is always within a few degrees of
                 // "upwards" in normal hover (near-zero drift means desired == up exactly - see just
@@ -570,7 +586,10 @@ public class SASManager : MonoBehaviour
                 var look = Rotation.LookRotation(desired, north);
                 effX = 0;
                 effY = 0;
-                effZ = GetCurrentOffsetAngles(look).roll;
+                // Computed unconditionally (not just while disabled) so CurrentRollOffset always
+                // reflects "what would Roll show right now if I hit CUR" - see its field comment.
+                CurrentRollOffset = GetCurrentOffsetAngles(look).roll;
+                effZ = HoverRollEnabled ? Z : CurrentRollOffset;
                 _rotation = look;
                 _rotation.localRotation = look.localRotation * QuaternionD.Euler(0, 0, effZ) * QuaternionD.Euler(90, 0, 0);
 
@@ -651,7 +670,7 @@ public class SASManager : MonoBehaviour
             _LOGGER.LogDebug(
                 $"[SetRotation] mode={AttitudeMode} heading={currentHeading:F1}deg pitch={currentPitch:F1}deg roll={currentRoll:F1}deg " +
                 $"angularVelocity={angularVelocity:F1}deg/s altitude={_vessel.AltitudeFromSurface:F1}m verticalSpeed={_vessel.VerticalSrfSpeed:F2}m/s " +
-                $"offsets(H={effX:F1}[{XEnabled}],P={effY:F1}[{YEnabled}],R={effZ:F1}[{ZEnabled}]) angleToTarget={angleToTarget:F2}deg " +
+                $"offsets(H={effX:F1}[{XEnabled}],P={effY:F1}[{YEnabled}],R={effZ:F1}[{(AttitudeMode == AttitudeMode.Hover ? HoverRollEnabled : ZEnabled)}]) angleToTarget={angleToTarget:F2}deg " +
                 $"commandedAngleToTarget={commandedAngleToTarget:F2}deg slewCapDeg={slewCapDeg:F2} " +
                 $"upwards={FormatVector(upwards)} north={FormatVector(north)}" +
                 (loggedTarget.HasValue ? $" target={FormatVector(loggedTarget.Value)}" : ""));
@@ -734,16 +753,14 @@ public class SASManager : MonoBehaviour
     // tick) can reuse the exact same fixed-value-vs-free-track behavior as every other pointing mode.
     private Rotation ApplyOffsets(Rotation look, out double appliedX, out double appliedY, out double appliedZ)
     {
-        appliedX = XEnabled ? X : 0;
-        appliedY = YEnabled ? Y : 0;
-        appliedZ = ZEnabled ? Z : 0;
-        if (!XEnabled || !YEnabled || !ZEnabled)
-        {
-            var current = GetCurrentOffsetAngles(look);
-            if (!XEnabled) appliedX = current.heading;
-            if (!YEnabled) appliedY = current.pitch;
-            if (!ZEnabled) appliedZ = current.roll;
-        }
+        // Computed unconditionally (not just for a disabled axis) so CurrentRollOffset always
+        // reflects "what would Roll show right now if I hit CUR" - see its field comment.
+        var current = GetCurrentOffsetAngles(look);
+        CurrentRollOffset = current.roll;
+
+        appliedX = XEnabled ? X : current.heading;
+        appliedY = YEnabled ? Y : current.pitch;
+        appliedZ = ZEnabled ? Z : current.roll;
 
         var rotation = look;
         rotation.localRotation = AttitudeMath.ComposePointingRotation(look.localRotation, appliedX, appliedY, appliedZ);

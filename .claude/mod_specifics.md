@@ -34,6 +34,7 @@ Design north star is feature parity with KSP1 MechJeb2's "Smart A.S.S." module �
 | `Code/SASExtendedPlugin.cs` | Mod entry point. Binds config (`Settings.Initialize()`), registers the custom UITK control factories (reflection-based `VisualElementFactoryRegistry.RegisterFactory` — see `custom_uxml_controls.md`), loads the window UXML + appbar icon via `Assets.LoadAssetAsync<T>(key).WaitForCompletion()`, spawns the `SASManager` MonoBehaviour, applies Harmony patches, and hides/restores the window on flight-scene enter/exit (`GameStateChangedMessage`). |
 | `Code/Managers/SASManager.cs` | **Core control loop.** A `MonoBehaviour` that every `Update()` computes a target `Rotation` for the active `AttitudeMode` and commands it via `SAS.LockRotation`; also drives Hover's throttle. See "How KSP2 SAS works" and "Offset math" below. Exposes `IsEngaged` and `CommandedRotation` (the slew-limited setpoint) for the Flight Axes visuals. |
 | `Code/Managers/FlightAxesVisualizer.cs` | **In-world flight-axis visuals** — split control axes (fwd/up/right), commanded/target attitude arrows, orbital (prograde/normal/radial-in), surface & horizontal velocity arrows, CoM marker — toggled from the settings panel. Data-driven arrow registry (`_arrowSpecs`/`SetVisual`/`ToggleIds`). Reuses the game's own debug-shape components/prefabs. See "Flight Axes visuals" below. |
+| `Code/Managers/LandingPredictionManager.cs` | **In-world landing prediction visuals** — a trajectory line + ground impact marker for the active vessel's predicted unpowered coast, on any body with a solid surface (pure ballistic coast, no atmospheric drag model - rough indicator only on atmospheric bodies). RK4-integrated off the orbit's live state vector (deliberately not the orbit's analytic Kepler-anomaly reconstruction, which is unreliable in this predictor's near-radial regime). See "Landing prediction visuals" below and [`landing_prediction_fixes.md`](landing_prediction_fixes.md) for the debugging history — read that before touching this file again. |
 | `Code/PureMath/{AttitudeMath,HoverThrottleMath}.cs` | Pure quaternion/control-law math extracted out of `SASManager`, free of KSP.Sim's frame-aware types, so it can be exercised by edit-mode unit tests instead of only in-game. Change the *math* here; keep `SASManager` as the thin glue that feeds it live telemetry. |
 | `Tests/EditMode/{AttitudeMathTests,HoverThrottleMathTests}.cs` | Unity Test Framework edit-mode tests for the above. Run from Unity's Test Runner window. |
 | `Code/Models/AttitudeMode.cs` | Enum of every mode (see full list below). |
@@ -118,11 +119,16 @@ appbar toggle button. Layout, top → bottom:
   - **TGT:** TGT+, TGT−, R VEL+, R VEL−, PAR+, PAR− (all six greyed out with no target selected).
   - **SPEC:** Star+, Star− (parent-star pointing), `HOLD` (inertial hold), HOVER.
 - **Offset rows (3):** `Heading`, `Pitch`, `Roll`. Each row = a per-axis enable toggle (green LED)
-  + a numeric field (degrees) + `−`/`+` nudge buttons + two presets (`0` and `90`/`90`/`180`, Roll's
-  second preset being 180°). Applied live as they change — no EXECUTE button. Per-mode H/P/R values
+  + a numeric field (degrees) + `−`/`+` nudge buttons + two presets (`0` and `90`/`90`/`CUR`, Roll's
+  second preset reading the vessel's current actual roll — `SASManager.CurrentRollOffset`, updated
+  every tick regardless of whether roll is currently locked — and setting that as the new target).
+  Applied live as they change — no EXECUTE button. Per-mode H/P/R values
   are remembered for the session (`Settings.AttitudeOffsets`) and reapplied when you switch back to
-  that mode. Swapped out entirely for **Hover's own panel** (target vertical speed + cancel-drift
-  toggle) while Hover is active.
+  that mode. Swapped out for **Hover's own panel** (target vertical speed + cancel-drift toggle +
+  its own Roll row, sharing the target angle field `Z` with the shared Roll row but driving its
+  own enable flag `HoverRollEnabled` rather than the shared `ZEnabled` — so toggling Roll off/on in
+  one mode never bleeds into another's — and defaulting to off) while Hover is active; only
+  Heading/Pitch drop away there, since Hover pins those to the thrust direction.
 - **SAS mode color coding:** each ORB direction button's LED has an intrinsic color family
   (Prograde/Retrograde share one, Normal/AntiNormal another, Radial In/Out a third); the
   Heading/Pitch/Roll toggles pick up whichever family is currently active so offsets visually read
@@ -145,8 +151,9 @@ across every pointing mode via one `LockRotation` per tick:
   that value straight back, so the autopilot applies ~no torque there and the vessel drifts freely
   on that axis (mirrors vanilla SAS's own `SetTargetOrientation`, which likewise only constrains
   2 DOF and leaves roll uncontrolled).
-- `Hover` only ever exposes **Roll** to this mechanism — heading/pitch are pinned to the thrust
-  direction and aren't user-configurable there.
+- `Hover` only ever exposes **Roll** to this mechanism (via its own panel's Roll row, not the shared
+  one — see the UI design section above) — heading/pitch are pinned to the thrust direction and
+  aren't user-configurable there.
 
 ## Flight Axes visuals (settings panel)
 
@@ -245,6 +252,51 @@ part of the mutually-exclusive `_allModeToggles` mode set — `ClearAllModeToggl
 again reverses it. Every queried element is **null-guarded** so the window still builds while this UXML is being
 authored. Toggle/panel states are **session-only** (not persisted to `Settings`) and reset to
 off/main-view when the window is first created.
+
+## Landing prediction visuals (settings panel)
+
+Optional in-world visuals for the active vessel's predicted **unpowered coast**: a trajectory line
+from the vessel down to the ground, plus a marker at the predicted impact point — one toggle
+(`show-landing-prediction`, `LandingPredictionManager.ToggleId`) in the settings panel alongside the
+Flight Axes toggles, persisted via `Settings.ShowLandingPrediction`. Modelled on KSP1 MechJeb2's
+*Landing Guidance → Show Landing predictions*. **Pure ballistic/Keplerian coast, no drag/parachute
+integrator** — renders on every body, including ones with an atmosphere, but atmospheric effects
+are never modeled, so on an atmospheric body it's a rough indicator only (drifts further from
+reality the more a real reentry's drag/heating actually matters), **always-on-top rendering**
+(`_ZTest = Always`, `renderQueue = Overlay` — see
+`FlightAxesVisualizer`'s CoM-marker precedent), **flight view only**. Full design rationale in
+[`landing_prediction_plan.md`](landing_prediction_plan.md); the actual implementation deviates from
+that plan in several load-bearing ways documented in
+[`landing_prediction_fixes.md`](landing_prediction_fixes.md) — **read that file before changing
+anything in `LandingPredictionManager.cs`**, several earlier, more "obvious" approaches were tried
+in-game and demonstrably broken.
+
+**Algorithm ("where do I land if I cut thrust now"):** every ~0.2s
+(`LandingPredictionManager.ComputeIntervalSeconds`), numerically integrate (RK4, pure two-body
+gravity) forward from the orbit's *live tracked* state vector (`orbit.localPosition`/
+`relativeVelocity` — **not** `PatchedConicsOrbit.GetTruePositionAtUT`'s analytic Kepler-anomaly
+reconstruction, confirmed unreliable for the near-radial/near-zero-angular-momentum orbits this
+predictor lives in by definition) until the first terrain crossing. A cheap coarse pass first
+brackets roughly when the crossing happens over a vis-viva-computed horizon (not
+`orbit.period`/`orbit.eccentricity` — also unreliable in this regime), then a fine pass re-integrates
+from scratch with a step size scaled to that estimate, so a multi-minute coast and a 5-second
+suborbital hop both render an equally smooth ~200-sample curve. Each terrain-altitude check
+(`GetAltitudeFromTerrain`) de-rotates the query position backward by the angle the body will have
+swept forward by that sample's time — a necessary correction since that call is a snapshot-*now*
+query with no future-time concept, and the body keeps rotating under the falling vessel while the
+integrator looks ahead.
+
+**Rendering (the load-bearing gotcha):** every sample and the impact point are stored as
+**de-rotated offset vectors relative to the vessel's own position at compute time**, not absolute
+positions. `UpdateVisualPositions` (every render frame, not throttled) re-queries the vessel's
+*current* position fresh and converts it via `PositionToPhysics`, then converts each cached offset
+via `PhysicsSpace.VectorToPhysics` and adds them together. Caching an *absolute* position and
+re-converting it every frame via `PositionToPhysics` looks correct but drifts out of sync with the
+game's own continuous floating-origin re-anchoring between recomputes (the vessel's own on-screen
+position is re-anchored every frame; a cached absolute conversion was not) — see
+`landing_prediction_fixes.md` round 9/10 for the full diagnosis. **Anchor to the vessel's live
+position and only cache/convert relative offsets — never cache an absolute `PositionToPhysics`
+result across more than one frame.**
 
 ## Hover mode (SPEC → Hov) — throttle control
 
@@ -364,6 +416,12 @@ jumps to the goal while the orange commanded arrow slews onto the white up/contr
 arrows point the right way (prograde/normal/radial-in/surface-velocity against the navball). The
 settings-panel UXML (`#settings-container`, `#settings-button`, and the eleven `show-*` toggles in
 `FlightAxesVisualizer.ToggleIds`) is authored by the user, not shipped in this codebase yet.
+
+**Landing prediction visuals — implemented and in-game tested, working**, on branch
+`feature/landing-prediction-visuals`. Trajectory line + impact marker render correctly for airless
+bodies, including the near-zero-horizontal-velocity case and the near-radial (falling almost
+straight down) regime that broke several earlier approaches — see `landing_prediction_fixes.md` for
+the 10-round debugging log before touching `LandingPredictionManager.cs` again.
 
 Build-constraint reminder: the Unity asmdef compiles at **C# 9.0** (Unity 6000.4.1f1) — no
 file-scoped namespaces, no `with` on structs. See [[langversion-csharp9]].

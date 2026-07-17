@@ -2,10 +2,10 @@
     "Window": {
         // Saved window horizontal position in pixels. -1 means the window has never been moved yet.
         // Default: 639
-        "Window horizontal position (px)": 639.0,
+        "Window horizontal position (px)": 475,
         // Saved window vertical position in pixels. -1 means the window has never been moved yet.
         // Default: 762.75
-        "Window vertical position (px)": 762.75,
+        "Window vertical position (px)": 775,
         // Whether the SAS Extended window is shown automatically when entering flight.
         // Default: True
         "Window open by default": true
