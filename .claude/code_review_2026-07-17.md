@@ -16,18 +16,18 @@ called out inline.
 
 ## Contents
 
-| # | Recommendation | Category |
-|---|---|---|
-| 1 | Resolve the vessel once per tick instead of 63 times | Crash / perf |
-| 2 | `GetParentStar` returns null → per-tick NRE | Crash |
-| 3 | ~63 unguarded `_root.Q<…>()` calls in `OnEnable` | Crash |
-| 4 | Event + singleton lifecycle asymmetry | Crash |
-| 5 | Unchecked async prefab-load callback | Crash |
-| 6 | A full config file write on every click in the window | Perf |
-| 7 | Per-frame waste in `LandingPredictionManager` | Perf |
-| 8 | Replace the ~300-line `SetRotation` switch with a registry | Structure |
-| 9 | Extract the (now four times) duplicated offset row | Structure |
-| 10 | Move the landing predictor's math into `PureMath/` | Structure |
+| # | Status | Recommendation | Category |
+|---|---|---|---|
+| 1 | DONE | Resolve the vessel once per tick instead of 63 times | Crash / perf |
+| 2 | NOT STARTED | `GetParentStar` returns null → per-tick NRE | Crash |
+| 3 | NOT STARTED | ~63 unguarded `_root.Q<…>()` calls in `OnEnable` | Crash |
+| 4 | NOT STARTED | Event + singleton lifecycle asymmetry | Crash |
+| 5 | NOT STARTED | Unchecked async prefab-load callback | Crash |
+| 6 | NOT STARTED | A full config file write on every click in the window | Perf |
+| 7 | NOT STARTED | Per-frame waste in `LandingPredictionManager` | Perf |
+| 8 | NOT STARTED | Replace the ~300-line `SetRotation` switch with a registry | Structure |
+| 9 | NOT STARTED | Extract the (now four times) duplicated offset row | Structure |
+| 10 | NOT STARTED | Move the landing predictor's math into `PureMath/` | Structure |
 
 ---
 
