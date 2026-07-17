@@ -116,8 +116,62 @@ guarantees the line's start point always exactly coincides with wherever the gam
 vessel this frame, regardless of the floating origin's exact re-anchoring behavior. **Confirmed
 fixed in-game** — smooth curve, correct baseline for near-zero horizontal velocity, no drift/snap.
 
+**Round 11 — KSC runway impact marker rendered underground; `GetAltitudeFromTerrain`'s
+`sceneryOffset` out-param wasn't accounted for at all.** `GetAltitudeFromTerrain` returns
+`terrainAltitude` (height above the raw PQS terrain mesh) and a separate `sceneryOffset` for
+built structures (KSC's runway/buildings) sitting above/instead of that raw mesh — the code was
+discarding `sceneryOffset` entirely (`out _`), so the impact search converged on raw-terrain-zero
+instead of the real (much higher) runway surface. Two sign attempts both failed in-game: adding
+`sceneryOffset` (wrong), then subtracting it after decompiling `KSP.Sim.impl.TelemetryComponent`
+and confirming the game's own `AltitudeFromScenery = terrainAltitude - sceneryOffset` formula
+(right formula, still didn't fix it). Added logging at the user's request revealed why: queried at
+future/derotated march-search positions, `sceneryOffset` held a rock-solid ~8.9m while comfortably
+above the surface, then fell to **exactly 0** right as the query point neared/crossed it — silently
+corrupting exactly the samples closest to touchdown regardless of which sign was used. A "cache the
+last known-good nonzero reading" heuristic (threaded via `ref` through the whole search) was tried
+next and also didn't help — **reverted**, since the true offset turned out to vary too much by
+location (a separate debug overlay measured ~277m at one runway spot vs. the ~8.9m logged at
+another) for a single cached "last good value" to reliably apply near touchdown either.
+
+**Round 12 — `Physics.Raycast`-based ground truth: fixed the underground marker, but introduced
+new problems.** Real collision geometry (layers `Physx.Terrain`/`Physx.Scenery`/`Local.Terrain`/
+`Local.Scenery`/`Internal.Scenery`/`KSCBuildings`, from `ProjectSettings/TagManager.asset`) is
+ground truth for "what would the vessel actually land on," sidestepping `GetAltitudeFromTerrain`'s
+scenery handling entirely. Cast one ray per recompute, straight down through the coarse pass's
+rough impact estimate (generous margin/max-distance since that rough estimate could itself be
+hundreds of meters wrong), and derived a constant `groundCorrection` from how far off raw
+`terrainAltitude` read at the real hit point. **This worked** — confirmed in-game — but the user
+flagged two side effects: a performance concern about raycasting every recompute, and a visible
+"twitching" in the rendered marker, since the raycast's origin depended on the coarse pass's
+impact estimate, which shifts slightly between recomputes even for an otherwise-steady vessel.
+
+**Round 13 — the actual fix: sample `GetAltitudeFromTerrain` once at the vessel's own LIVE
+position, not the raycast.** Added extensive comparison logging (vessel's own official telemetry —
+`AltitudeFromTerrain`/`AltitudeFromScenery`/`AltitudeFromSurface`/`AltitudeFromRadius` — vs. our own
+`GetAltitudeFromTerrain` calls at the vessel's position, at the coarse pass's rough impact point,
+and the round-12 raycast result) and had the user fly a structured test: a fixed-altitude hover,
+then a slow horizontal pass along the runway, then a slow vertical descent to touchdown, all with
+verbose logging on. The `Player.log` data showed: (1) `sceneryOffset` queried at the vessel's own
+*real* current position **never once collapsed to 0** across 1321 logged samples, including all the
+way down to ~2m above the true ground during the slow descent — only future/derotated *hypothetical*
+query positions ever showed that collapse (round 11); (2) that value tracked the round-12 raycast's
+answer closely even at the largest lateral distance in the test (~250m: worst-case ~20m difference,
+mean ~6.5m, against a ~230–280m correction — a small relative error). **Fix:** removed the
+`Physics.Raycast` entirely; `groundCorrection` is now `-sceneryOffset` from a single
+`GetAltitudeFromTerrain` call at the vessel's live `startPos`, held constant across the coarse pass,
+fine pass, and bisection for that recompute. Cheaper (no raycast, no collider-streaming dependency
+for a distant predicted impact point), and the twitching is gone since the vessel's own real
+position changes smoothly frame to frame, unlike the coarse pass's search-derived estimate.
+**Confirmed fixed in-game.**
+
 ## Takeaways for next time
 
+- **`GetAltitudeFromTerrain`'s `sceneryOffset` is only reliable queried at a real, live position -
+  not at a hypothetical future/derotated one.** It silently collapses to 0 once a future-position
+  query point gets within a few meters of the true surface (rounds 11-13), but never showed that
+  failure sampled at the vessel's own current position, even down to ~2m of true altitude. Sample it
+  ONCE per recompute at a live position and hold it constant rather than re-querying it at every
+  march/bisection sample.
 - **Never trust `orbit.period`/`orbit.eccentricity`/`GetTruePositionAtUT` in this code.** This
   predictor lives in the near-radial, near-zero-angular-momentum regime by definition, and every
   native "analytic orbit element" property has turned out to be unreliable there at least once.

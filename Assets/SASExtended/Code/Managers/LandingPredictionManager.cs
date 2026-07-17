@@ -272,13 +272,20 @@ public class LandingPredictionManager : MonoBehaviour
         double omegaMag = omega.magnitude;
         Vector3d omegaAxis = omegaMag > 1e-12 ? omega / omegaMag : Vector3d.up;
 
-        double altAtNow = AltitudeAt(body, frame, startPos);
+        // Ground-height correction for "scenery" (KSC's runway/buildings) sitting above the raw PQS
+        // terrain mesh - sampled ONCE here, at the vessel's own live position, and held constant for
+        // the whole recompute. See landing_prediction_fixes.md (KSC runway rounds) for why - the
+        // short version being that re-querying sceneryOffset at future/derotated points is unreliable
+        // near the ground, but it's smooth/stable enough at a live position to use as-is.
+        body.GetAltitudeFromTerrain(new Position(frame, startPos), out var rawTerrainAtVessel, out var sceneryOffsetAtVessel);
+        double groundCorrection = -sceneryOffsetAtVessel;
+        double altAtNow = rawTerrainAtVessel + groundCorrection;
         double searchDt = (upperUt - now) / SearchSteps;
 
         // Coarse pass: cheaply bracket roughly when the crossing happens, over the full horizon.
         bool foundCoarse = MarchToImpact(
             body, frame, omegaAxis, omegaMag, mu, startPos, startVel, altAtNow,
-            searchDt, SearchSteps, null,
+            searchDt, SearchSteps, null, groundCorrection,
             out _, out Vector3d coarseImpactOffset, out double coarseImpactSpan);
 
         if (!foundCoarse)
@@ -303,7 +310,7 @@ public class LandingPredictionManager : MonoBehaviour
         double fineDt = fineSpan > 0.0 ? fineSpan / MarchSteps : 0.0;
         bool foundFine = MarchToImpact(
             body, frame, omegaAxis, omegaMag, mu, startPos, startVel, altAtNow,
-            fineDt, MarchSteps, _sampleOffsets,
+            fineDt, MarchSteps, _sampleOffsets, groundCorrection,
             out int sampleCount, out Vector3d impactOffset, out double impactSpan);
 
         if (!foundFine)
@@ -340,7 +347,8 @@ public class LandingPredictionManager : MonoBehaviour
             _LOGGER.LogDebug(
                 $"Landing prediction: impact in ~{impactSpan:F1}s at lat={impactLat:F2} lon={impactLon:F2}, " +
                 $"horizOffset={horizontalDelta.magnitude:F2}m, startVel(vert={vertVel * 1000.0:F1}mm/s, " +
-                $"horiz={horizVelVec.magnitude * 1000.0:F1}mm/s), bodyRotationPeriod={(omegaMag > 0.0 ? 2.0 * Math.PI / omegaMag : 0.0):F0}s.");
+                $"horiz={horizVelVec.magnitude * 1000.0:F1}mm/s), bodyRotationPeriod={(omegaMag > 0.0 ? 2.0 * Math.PI / omegaMag : 0.0):F0}s, " +
+                $"groundCorrection={groundCorrection:F1}m.");
         }
     }
 
@@ -354,7 +362,7 @@ public class LandingPredictionManager : MonoBehaviour
     private static bool MarchToImpact(
         CelestialBodyComponent body, ICoordinateSystem frame, Vector3d omegaAxis, double omegaMag, double mu,
         Vector3d startPos, Vector3d startVel, double startAlt, double dt, int maxSteps,
-        Vector3d[] offsets,
+        Vector3d[] offsets, double groundCorrection,
         out int sampleCount, out Vector3d impactOffset, out double impactSpan)
     {
         sampleCount = 1;
@@ -382,7 +390,7 @@ public class LandingPredictionManager : MonoBehaviour
                 offsets[sampleCount] = offset;
             sampleCount++;
 
-            double alt = AltitudeAt(body, frame, derotated);
+            double alt = AltitudeAt(body, frame, derotated, groundCorrection);
             if (alt <= 0.0)
             {
                 // The straight-line segment between the last two samples is a fine approximation
@@ -403,7 +411,7 @@ public class LandingPredictionManager : MonoBehaviour
                     double frac = loFrac + (hiFrac - loFrac) * (loAlt / (loAlt - hiAlt));
                     frac = Math.Min(Math.Max(frac, loFrac + 1e-6), hiFrac - 1e-6);
                     Vector3d candidateOffset = Vector3d.Lerp(prevOffset, offset, frac);
-                    double candidateAlt = AltitudeAt(body, frame, startPos + candidateOffset);
+                    double candidateAlt = AltitudeAt(body, frame, startPos + candidateOffset, groundCorrection);
                     if (candidateAlt > 0.0)
                     {
                         loAlt = candidateAlt;
@@ -472,10 +480,12 @@ public class LandingPredictionManager : MonoBehaviour
         return backRotation * localPos;
     }
 
-    private static double AltitudeAt(CelestialBodyComponent body, ICoordinateSystem frame, Vector3d derotatedPos)
+    // groundCorrection covers the gap between the raw PQS terrain mesh and "scenery" (KSC's runway/
+    // buildings) - see its computation in RecomputeTrajectory and landing_prediction_fixes.md.
+    private static double AltitudeAt(CelestialBodyComponent body, ICoordinateSystem frame, Vector3d derotatedPos, double groundCorrection)
     {
         body.GetAltitudeFromTerrain(new Position(frame, derotatedPos), out var terrainAltitude, out _);
-        return terrainAltitude;
+        return terrainAltitude + groundCorrection;
     }
 
     // Gated behind VerboseLoggingEnabled - this runs every throttled recompute (every ~0.2s while
