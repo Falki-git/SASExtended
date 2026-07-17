@@ -30,8 +30,13 @@ public class MainWindowController : MonoBehaviour
     // The backing field for the IsWindowOpen property
     private bool _isWindowOpen;
 
-    // Guards the one-time SASManager.Disengaged subscription in Update() - see the comment there.
-    private bool _subscribedToSasManager;
+    // The SASManager instance currently subscribed to (see Update()'s subscription and OnDisable's
+    // matching unsubscribe) - null means not currently subscribed to anyone. Tracking the actual
+    // instance rather than a bool guards against unsubscribing from the wrong object if
+    // SASManager.Instance were ever reassigned to a different instance between subscribe and
+    // unsubscribe (it never legitimately does today - see SASManager.OnDestroy - but a bool flag alone
+    // can't express "unsubscribe from this specific one").
+    private SASManager _subscribedSasManager;
 
     private SideToggleControl _offToggle;
     private SideToggleControl _killrotToggle;
@@ -215,6 +220,17 @@ public class MainWindowController : MonoBehaviour
         WireSection(nameof(WireLandingPredictionToggle), WireLandingPredictionToggle);
         WireSection(nameof(WireSettingsButton), WireSettingsButton);
         WireSection(nameof(WireCloseButton), WireCloseButton);
+    }
+
+    // Mirrors the subscription in Update() - without this, the Disengaged event holds a strong
+    // reference to this MainWindowController for as long as _subscribedSasManager lives, and any
+    // Disengaged firing after this component is disabled/destroyed would run the handler against a
+    // dead UI (touching _offToggle/_xValue/etc. that may themselves already be torn down).
+    private void OnDisable()
+    {
+        if (_subscribedSasManager != null)
+            _subscribedSasManager.Disengaged -= OnSasManagerDisengaged;
+        _subscribedSasManager = null;
     }
 
     // Runs one logical piece of OnEnable's wiring in isolation. Require<T> below logs a specific error
@@ -593,12 +609,12 @@ public class MainWindowController : MonoBehaviour
         // Deferred to here (rather than OnEnable) because SASManager.Instance is still null the first
         // time OnEnable runs - see the comment on UpdatePanelForMode. Runs unconditionally (ahead of
         // the IsWindowOpen gate below) so the subscription still happens even while the window starts
-        // out closed. Only ever fires once - style.display toggling doesn't re-run OnEnable/Update's
-        // subscription guard.
-        if (!_subscribedToSasManager && SASManager.Instance != null)
+        // out closed. Only fires once per enable/disable cycle - OnDisable clears _subscribedSasManager
+        // back to null so a later re-enable resubscribes instead of staying unsubscribed forever.
+        if (_subscribedSasManager == null && SASManager.Instance != null)
         {
-            SASManager.Instance.Disengaged += OnSasManagerDisengaged;
-            _subscribedToSasManager = true;
+            _subscribedSasManager = SASManager.Instance;
+            _subscribedSasManager.Disengaged += OnSasManagerDisengaged;
         }
 
         if (!IsWindowOpen)

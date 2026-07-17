@@ -14,7 +14,7 @@ public class SASManager : MonoBehaviour
 {
     private SASManager() { }
 
-    public static SASManager Instance { get; set; }
+    public static SASManager Instance { get; private set; }
 
     // Fired when SASManager disengages itself (vessel switch/undock/revert/scene-exit - see
     // DisengageForVesselChange) rather than the player clicking a toggle. MainWindowController
@@ -209,6 +209,18 @@ public class SASManager : MonoBehaviour
         // this on re-engage (see the field comment above), so it must not be reloaded from config here
         // on every engage, just the one time the vessel/session starts.
         HoverTargetVerticalSpeed = Settings.HoverVerticalVelocity.Value;
+    }
+
+    // Mirrors FlightAxesVisualizer/LandingPredictionManager's own OnDestroy - without this, Instance
+    // keeps pointing at a destroyed SASManager across a scene reload, and the next reader sees a dead
+    // MonoBehaviour rather than null. That reader is FlightInputHandlerThrottlePatch, a Harmony patch
+    // on the game's own input handler that runs every FixedUpdate regardless of scene state - the one
+    // place a stale Instance is least recoverable, which is why this one (unlike its two siblings)
+    // used to be missing entirely.
+    private void OnDestroy()
+    {
+        if (Instance == this)
+            Instance = null;
     }
 
     private void Update()

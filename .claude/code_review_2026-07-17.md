@@ -21,7 +21,7 @@ called out inline.
 | 1 | DONE | Resolve the vessel once per tick instead of 63 times | Crash / perf |
 | 2 | DONE | `GetParentStar` returns null → per-tick NRE | Crash |
 | 3 | DONE | ~63 unguarded `_root.Q<…>()` calls in `OnEnable` | Crash |
-| 4 | NOT STARTED | Event + singleton lifecycle asymmetry | Crash |
+| 4 | DONE | Event + singleton lifecycle asymmetry | Crash |
 | 5 | NOT STARTED | Unchecked async prefab-load callback | Crash |
 | 6 | NOT STARTED | A full config file write on every click in the window | Perf |
 | 7 | NOT STARTED | Per-frame waste in `LandingPredictionManager` | Perf |
@@ -153,6 +153,13 @@ stale instance is least recoverable — does not.
 
 **Recommendation:** unsubscribe in `OnDisable`; give `SASManager` the same `OnDestroy` its two
 siblings already have; make the setter private.
+
+> **Implemented:** `SASManager.Instance` setter is now `private set`; added an `OnDestroy` matching
+> `FlightAxesVisualizer`/`LandingPredictionManager`'s (`if (Instance == this) Instance = null;`).
+> `MainWindowController` replaced the `_subscribedToSasManager` bool with a `_subscribedSasManager`
+> field that tracks the actual subscribed instance (not just a flag), so the new `OnDisable`
+> unsubscribes from the exact instance it subscribed to in `Update()`, and clears the field so a later
+> re-enable resubscribes instead of staying permanently unsubscribed.
 
 ### 5. Unchecked async prefab-load callback
 `Assets/SASExtended/Code/Managers/FlightAxesVisualizer.cs:239-243`
