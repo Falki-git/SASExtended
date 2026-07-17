@@ -16,18 +16,18 @@ called out inline.
 
 ## Contents
 
-| # | Recommendation | Category |
-|---|---|---|
-| 1 | Resolve the vessel once per tick instead of 63 times | Crash / perf |
-| 2 | `GetParentStar` returns null → per-tick NRE | Crash |
-| 3 | ~63 unguarded `_root.Q<…>()` calls in `OnEnable` | Crash |
-| 4 | Event + singleton lifecycle asymmetry | Crash |
-| 5 | Unchecked async prefab-load callback | Crash |
-| 6 | A full config file write on every click in the window | Perf |
-| 7 | Per-frame waste in `LandingPredictionManager` | Perf |
-| 8 | Replace the ~300-line `SetRotation` switch with a registry | Structure |
-| 9 | Extract the (now four times) duplicated offset row | Structure |
-| 10 | Move the landing predictor's math into `PureMath/` | Structure |
+| # | Status | Recommendation | Category |
+|---|---|---|---|
+| 1 | DONE | Resolve the vessel once per tick instead of 63 times | Crash / perf |
+| 2 | DONE | `GetParentStar` returns null → per-tick NRE | Crash |
+| 3 | DONE | ~63 unguarded `_root.Q<…>()` calls in `OnEnable` | Crash |
+| 4 | DONE | Event + singleton lifecycle asymmetry | Crash |
+| 5 | NOT STARTED | Unchecked async prefab-load callback | Crash |
+| 6 | NOT STARTED | A full config file write on every click in the window | Perf |
+| 7 | DONE | Per-frame waste in `LandingPredictionManager` | Perf |
+| 8 | DONE | Replace the ~300-line `SetRotation` switch with a registry | Structure |
+| 9 | DONE | Extract the (now four times) duplicated offset row | Structure |
+| 10 | DONE | Move the landing predictor's math into `PureMath/` | Structure |
 
 ---
 
@@ -83,6 +83,16 @@ branch, so the handler doesn't actually handle anything.
 `DisengageForLostReference()` path, and **cache the star at engage time** rather than walking the
 body tree every tick — the parent star cannot change while a mode is engaged.
 
+> **Implemented:** `GetParentStar` replaced with `static bool TryGetParentStar(VesselComponent, out
+> CelestialBodyComponent)` (no try/catch — the `while` guards `body != null` directly, since the
+> confirmed failure is a null `referenceBody`, not an exception). `SetMode` resolves it once at
+> engage time via a new `IsStarMode(mode)` check, refusing to engage (logged warning, no state
+> change) if the star can't be found; the result is cached in `_engagedParentStar` and reused by
+> both `SpecialStarPlus`/`SpecialStarMinus` cases in `SetRotation` instead of a per-tick tree walk.
+> `Update()` gained a defensive `IsStarMode(AttitudeMode) && _engagedParentStar == null` check
+> mirroring the existing Maneuver/Target lost-reference guards, and `ResetPerVesselState` clears the
+> cached star on disengage.
+
 ### 3. ~63 unguarded `_root.Q<…>()` calls in `OnEnable`
 `Assets/SASExtended/Code/UI/MainWindowController.cs:209+`
 
@@ -106,6 +116,28 @@ splitting `OnEnable` so one failed section can't take out the rest.
 > ~50 to 63. New code is still being written in the unguarded style, which makes the helper more
 > valuable, not less.
 
+> **Implemented:** added `Require<T>(name)` (and a `Require<T>(container, name)` overload for
+> `_hoverControlsContainer` lookups), which logs a specific "element not found" error instead of a
+> bare `Q<T>()` returning null for the next line to NRE on. `OnEnable` itself now only sets up
+> `_window`/`_root` and then calls a sequence of `WireSection(name, action)` invocations, one per
+> logical group (`WireGlobalModeToggles`, `WireTabs`, `WireOrbitToggles`, `WireOffsetRows`,
+> `WireHoverControlsPanel`, etc. — 16 sections total, all former OnEnable content moved into them
+> verbatim). `WireSection` wraps each in try/catch and logs which named section failed, so a missing
+> element still throws (same NRE as before) but only aborts its own section instead of unwinding out
+> of `OnEnable` and skipping every registration written after it. `_allModeToggles` now filters out
+> nulls (`.Where(t => t != null)`) so a toggle that failed to resolve doesn't NRE
+> `ClearAllModeToggles` on every subsequent mode switch, and `RegisterModeButton` no-ops on a null
+> toggle for the same reason. The three call sites that already null-guarded themselves
+> (`WireFlightAxesToggles`, `WireLandingPredictionToggle`, `WireSettingsButton`) were left as-is and
+> are now just invoked through the same `WireSection` wrapper for consistency.
+>
+> **Follow-up (pre-merge sweep):** `SetToggleAvailability` (called every frame from `Update()` via
+> `UpdateNodeTargetAvailability`), `UpdateStatusLabel`, and `OnSasManagerDisengaged` still
+> unconditionally dereferenced `_nodeToggle`/`_statusLabel`/`_offToggle`/`_xValue`/etc. after the
+> above landed - a missing element there would go from one clear startup crash (pre-refactor) to a
+> repeating per-frame/per-event NRE (post-refactor), the opposite of this recommendation's intent.
+> Added guards to all three.
+
 ### 4. Event + singleton lifecycle asymmetry
 `MainWindowController.cs:504-507`, `SASManager.cs:17`
 
@@ -128,6 +160,13 @@ stale instance is least recoverable — does not.
 
 **Recommendation:** unsubscribe in `OnDisable`; give `SASManager` the same `OnDestroy` its two
 siblings already have; make the setter private.
+
+> **Implemented:** `SASManager.Instance` setter is now `private set`; added an `OnDestroy` matching
+> `FlightAxesVisualizer`/`LandingPredictionManager`'s (`if (Instance == this) Instance = null;`).
+> `MainWindowController` replaced the `_subscribedToSasManager` bool with a `_subscribedSasManager`
+> field that tracks the actual subscribed instance (not just a flag), so the new `OnDisable`
+> unsubscribes from the exact instance it subscribed to in `Update()`, and clears the field so a later
+> re-enable resubscribes instead of staying permanently unsubscribed.
 
 ### 5. Unchecked async prefab-load callback
 `Assets/SASExtended/Code/Managers/FlightAxesVisualizer.cs:239-243`
@@ -207,6 +246,22 @@ sample count or camera distance changes.
 pass the values and format lazily); track a `_visualsDestroyed` flag; cache the `AnimationCurve`
 and rebuild only on change.
 
+> **Implemented:** added `ShouldLogNoPrediction` (the same condition `LogNoPrediction` already
+> applied internally, now exposed) and guarded the `Update()` gated-off branch's interpolated
+> string with it, so it's built only when something will actually be logged - the disabled-by-
+> default path now allocates nothing per frame. `InFlightView` is read into a local once and reused
+> in both the condition and the log string instead of being evaluated twice. Added a
+> `_visualsDestroyed` bool so `DestroyVisuals()` no-ops once already torn down instead of re-running
+> its teardown every frame while gated off or while a recompute has no valid impact; `CreateVisuals`
+> clears it. For the render path, added a persistent `_widthCurve`/`_widthCurveKeyCount` pair:
+> `UpdateVisualPositions` now only reallocates the `Keyframe[]`/`AnimationCurve` when
+> `_trajectorySampleCount` actually changes (i.e. right after a recompute, not every frame), and
+> otherwise updates the existing curve's keys in place via `AnimationCurve.MoveKey` - widths
+> genuinely do need recomputing every frame (camera-to-vertex distance changes continuously), but
+> the curve object and its backing array no longer do. `DestroyVisuals` clears the cached curve too,
+> so a torn-down-and-recreated line always gets it reassigned rather than risking a stale reference
+> if the key count happens to coincide.
+
 ---
 
 ## Structure & separation of concerns
@@ -232,6 +287,31 @@ the four special cases stay explicit and become *visibly* special. Cuts roughly 
 exactly this pattern. The recommendation is to apply an established local convention to the one
 file that predates it, not to import a new one.
 
+> **Implemented, with one deviation from the literal recommendation:** `TargetParPlus`/
+> `TargetParMinus` build their rotation via `BuildTargetOrientationRotation` (the target's own
+> orientation frame), not a direction vector + `BuildPointingRotation` like every other mode — they
+> genuinely can't return a `Vector` from the registry, so they stay explicit alongside the four
+> already-special modes (six explicit cases total: `KillRot`, `Hold`, `Hover`, `Maneuver`,
+> `TargetParPlus`, `TargetParMinus`). The other 18 modes (all Orbit/Surface/Target-non-PAR/Star,
+> matching the doc's own case count once TARGET PAR is excluded) are now one-line entries in a
+> static `_directionSelectors` dictionary, keyed by `AttitudeMode`, of
+> `Func<TelemetryComponent, ICoordinateSystem, Vector, Vector, Vector>` (telemetry, referenceFrame,
+> north, upwards → direction) — `north`/`upwards` had to be added to the signature beyond the doc's
+> sketch since several modes (`SurfaceSurf`, `SurfaceUp`, both Hvel modes) need one or both and
+> can't derive them from telemetry alone. Built once as a `static readonly` field exactly like
+> `FlightAxesVisualizer._arrowSpecs`; `SpecialStarPlus`/`Minus` reach `_engagedParentStar` via the
+> static `Instance` singleton rather than capturing `this`, mirroring how `_arrowSpecs`' own entries
+> reach `SASManager.Instance.CommandedRotation`. The switch's `default:` case now does the shared
+> lookup + `BuildPointingRotation` call (one shared call site, as recommended), falling back to the
+> original horizon-pointing behavior if a mode has no registry entry — dead in practice, since
+> `AttitudeMode.None` never reaches this switch (`Update()` returns early on it) and every other
+> enum value has an entry, but kept as a safety net matching the switch's original fallback exactly.
+> The verbatim-duplicated Hvel± projection also got extracted into a shared
+> `HorizontalVelocityDirection` helper, closing that duplication out too. Net: -51 lines (the doc's
+> "~200" estimate undercounts how much of that comment-heavy codebase's density comes back as
+> per-entry documentation in the registry itself — the *code* shrank far more than the line count
+> alone shows).
+
 ### 9. Extract the (now four times) duplicated offset row
 `Assets/SASExtended/Code/UI/MainWindowController.cs:399-460` and the H/P/R rows above
 
@@ -251,6 +331,26 @@ buttons, two preset buttons, ~200 lines — differing only in element-name prefi
 Hover's row differs only in which enabled-flag it drives (`HoverRollEnabled` vs the shared
 `ZEnabled`) — which is exactly a parameter.
 
+> **Implemented, with the tab handlers left out of scope:** added
+> `(SideToggleControl Toggle, FloatField Value) BindOffsetRow(container, prefix, setValue,
+> setEnabledFlag, secondPreset)` — wires the toggle/value/±/first/second elements under `container`
+> named `<prefix>-toggle`/`-value`/`-minus`/`-plus`/`-first`/`-second`, and returns just the
+> toggle+value pair, since those are the only two widgets any other method (`UpdateAttitudeColors`,
+> `ApplyStoredOffsetsForCurrentMode`, `OnSasManagerDisengaged`, `UpdatePanelForMode`) still needs
+> after wiring — the ± /preset buttons are now local variables inside `BindOffsetRow` itself rather
+> than class fields, since nothing ever read them back (that includes six already-dead
+> `_x/y/zFirst/SecondSpecialButton` fields discovered while doing this, never wired at all —
+> removed). Named `setValue`/`setEnabledFlag`/`secondPreset` rather than the doc's literal
+> `getter`/`setter` shorthand, since nothing needs to *read* a row's current value at bind time —
+> only write it (on change) and supply the "second" preset button's target (a fixed 90° for
+> Heading/Pitch, the vessel's live current roll for both Roll rows). `SetRoll`/`CurrentRollPreset`
+> are literally the same two delegates passed to both the shared Roll row and Hover's own Roll row —
+> the exact case the bug-prevention note above was about, now structurally a single shared
+> implementation instead of two that can drift. Net: -117 lines. The four tab handlers mentioned in
+> the same paragraph were left alone — the recommendation itself only prescribed `BindOffsetRow`,
+> and unifying them would need a second, differently-shaped helper (index-based container/toggle
+> arrays) not part of this ask.
+
 ### 10. Move the landing predictor's math into `PureMath/`
 `LandingPredictionManager.cs` — `IntegrateStep`, `Acceleration`, `Derotate`, `MarchToImpact`
 
@@ -266,6 +366,23 @@ This is the **highest-value test target in the mod**: `.claude/landing_predictio
 documents a **ten-round** in-game debugging cycle for this math. Every one of those rounds required
 launching the game. The RK4 integration, coarse/fine bracketing, and bisection are all verifiable at
 the desk.
+
+> **Implemented, plus tests:** moved `MarchToImpact`/`IntegrateStep`/`Acceleration`/`Derotate` (and
+> `ImpactBisectionIterations`) verbatim into `Assets/SASExtended/Code/PureMath/LandingPredictionMath.cs`.
+> `MarchToImpact`'s signature dropped `CelestialBodyComponent body`/`ICoordinateSystem frame`/
+> `double groundCorrection` in favor of a single `Func<Vector3d, double> altitudeAt` (de-rotated
+> local-frame position in, terrain-relative altitude out) — `LandingPredictionManager.
+> RecomputeTrajectory` now builds that as a local function (`AltitudeAt`, capturing `body`/`frame`/
+> `groundCorrection`, the same three pieces the old private `AltitudeAt` method took as explicit
+> parameters) and passes it to both the coarse and fine `LandingPredictionMath.MarchToImpact` calls.
+> `SearchSteps`/`MarchSteps`/`TrajectorySampleCount` stayed on the manager (they're call-site
+> concerns - how many steps to march - not part of the algorithm itself). Added
+> `LandingPredictionMathTests.cs` (`Tests/EditMode/`, matching `AttitudeMathTests`/
+> `HoverThrottleMathTests`): `Acceleration`'s inverse-square direction, `IntegrateStep`'s RK4 holding
+> a circular orbit closed over 1000 steps, `Derotate`'s zero-input/magnitude-preservation/full-period
+> identities, and `MarchToImpact` against an analytically-solvable zero-gravity flat-ground descent
+> (immediate-impact, expected impact time/offset, no-crossing, and the raw `offsets[]` array) - the
+> exact class of scenario that used to need ten in-game rounds is now three lines of arrange/act/assert.
 
 ---
 
