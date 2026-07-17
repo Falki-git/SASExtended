@@ -100,8 +100,25 @@ public class LandingPredictionManager : MonoBehaviour
     private Material _lineMaterial;
     private Vector3[] _linePositionsBuffer;
 
+    // Reused across frames instead of allocating a fresh Keyframe[] + AnimationCurve every render
+    // frame (widths themselves DO need recomputing every frame - PixelWorldSize depends on
+    // camera-to-vertex distance, which changes continuously - but the curve object and its backing
+    // array don't need to). _widthCurve's keys are updated in place via MoveKey each frame;
+    // _widthCurveKeyCount tracks how many keys it currently has, so a change in
+    // _trajectorySampleCount (only happens right after a recompute, not every frame - see its field
+    // comment) is the one case that still reallocates, rebuilding the curve to the new key count.
+    private AnimationCurve _widthCurve;
+    private int _widthCurveKeyCount;
+
     private GameObject _markerGo;
     private ReticleMarker _marker;
+
+    // Tracks whether _lineGo/_markerGo currently exist, so DestroyVisuals() can no-op instead of
+    // running its teardown (several null checks + a field reset) every single frame while gated
+    // off/no valid prediction - both are common per-frame steady states (the feature is disabled by
+    // default, and UpdateVisualPositions calls DestroyVisuals() every frame a recompute doesn't
+    // currently have a valid impact), not one-off events.
+    private bool _visualsDestroyed = true;
 
     private static VesselComponent ActiveVessel =>
         GameManager.Instance?.Game?.ViewController?.GetActiveSimVessel();
@@ -143,9 +160,16 @@ public class LandingPredictionManager : MonoBehaviour
             _builtVessel = vessel;
         }
 
-        if (!_enabled || _builtVessel == null || !InFlightView)
+        // Read once rather than once in the condition and again inside the log string below (the
+        // string used to re-evaluate it a second time whenever this branch was actually taken).
+        bool inFlightView = InFlightView;
+        if (!_enabled || _builtVessel == null || !inFlightView)
         {
-            LogNoPrediction($"gated off (enabled={_enabled}, vessel={_builtVessel != null}, inFlightView={InFlightView}).");
+            // This branch runs every single frame for the (default, disabled) common case - guard
+            // the interpolated string with the same gate LogNoPrediction applies internally, so it's
+            // never actually built unless something would be logged. See ShouldLogNoPrediction.
+            if (ShouldLogNoPrediction)
+                LogNoPrediction($"gated off (enabled={_enabled}, vessel={_builtVessel != null}, inFlightView={inFlightView}).");
             DestroyVisuals();
             return;
         }
@@ -471,9 +495,18 @@ public class LandingPredictionManager : MonoBehaviour
     private float _lastNoPredictionLogTime = float.NegativeInfinity;
     private const float NoPredictionLogIntervalSeconds = 2f;
 
+    // The same gate LogNoPrediction applies internally, exposed so a caller about to build an
+    // interpolated diagnostic string (a heap allocation) can skip that work entirely when nothing
+    // would be logged anyway - see the call site in Update(), which runs every single frame for
+    // every player who leaves the feature at its default (disabled) setting. Callers passing a
+    // plain string literal (free to construct) don't need this - just call LogNoPrediction
+    // directly, which still applies this same gate on its own.
+    private bool ShouldLogNoPrediction =>
+        Settings.VerboseLoggingEnabled.Value && Time.time >= _lastNoPredictionLogTime + NoPredictionLogIntervalSeconds;
+
     private void LogNoPrediction(string reason)
     {
-        if (!Settings.VerboseLoggingEnabled.Value || Time.time < _lastNoPredictionLogTime + NoPredictionLogIntervalSeconds)
+        if (!ShouldLogNoPrediction)
             return;
         _lastNoPredictionLogTime = Time.time;
         _LOGGER.LogDebug($"No landing prediction: {reason}");
@@ -506,25 +539,44 @@ public class LandingPredictionManager : MonoBehaviour
         var cam = FlightCamera;
         Vector3 camPos = cam != null ? cam.transform.position : Vector3.zero;
 
-        var widthKeys = new Keyframe[_trajectorySampleCount];
+        // Rebuild (reallocate) only when the key count actually changes - i.e. right after a
+        // recompute changes _trajectorySampleCount, not every frame. See _widthCurve's field
+        // comment.
+        if (_widthCurve == null || _widthCurveKeyCount != _trajectorySampleCount)
+        {
+            var widthKeys = new Keyframe[_trajectorySampleCount];
+            for (int i = 0; i < _trajectorySampleCount; i++)
+            {
+                float t = _trajectorySampleCount > 1 ? (float)i / (_trajectorySampleCount - 1) : 0f;
+                widthKeys[i] = new Keyframe(t, 0f); // width filled in by the MoveKey loop below
+            }
+            _widthCurve = new AnimationCurve(widthKeys);
+            _line.widthCurve = _widthCurve;
+            _widthCurveKeyCount = _trajectorySampleCount;
+        }
+
         for (int i = 0; i < _trajectorySampleCount; i++)
         {
             Vector3d offsetWorld = physics.VectorToPhysics(new Vector(_predictionFrame, _sampleOffsets[i]));
             Vector3 point = vesselWorldNow + offsetWorld;
             _linePositionsBuffer[i] = point;
+            // Distance-to-camera (and so this width) genuinely does change every frame as the
+            // camera/vessel move - only the curve's key COUNT is stable between recomputes, which
+            // is what the rebuild check above skips reallocating on.
             float width = cam != null
                 ? Mathf.Max(LineWidthMeters, PixelWorldSize(cam, camPos, point) * MinLineWidthPixels)
                 : LineWidthMeters;
             float t = _trajectorySampleCount > 1 ? (float)i / (_trajectorySampleCount - 1) : 0f;
-            widthKeys[i] = new Keyframe(t, width);
+            _widthCurve.MoveKey(i, new Keyframe(t, width));
         }
         _line.positionCount = _trajectorySampleCount;
         _line.SetPositions(_linePositionsBuffer);
         // LineRenderer has no per-vertex SetWidths in this Unity version - widthCurve is sampled
         // at each vertex's normalized position (0 at the first vertex, 1 at the last), so one
-        // keyframe per vertex gives an exact per-vertex width just like SetWidths would.
+        // keyframe per vertex gives an exact per-vertex width just like SetWidths would. _widthCurve
+        // is assigned to _line.widthCurve once above (on (re)creation) - its keys are updated in
+        // place, so no reassignment is needed here every frame.
         _line.widthMultiplier = 1f;
-        _line.widthCurve = new AnimationCurve(widthKeys);
         // Read every frame (not cached) so a color-picker change in the settings menu applies
         // immediately.
         var lineColor = Settings.LandingPredictionLineColor.Value;
@@ -541,6 +593,8 @@ public class LandingPredictionManager : MonoBehaviour
 
     private void CreateVisuals()
     {
+        _visualsDestroyed = false;
+
         if (_lineGo == null)
         {
             _lineGo = new GameObject("SASX_LandingTrajectory");
@@ -628,6 +682,14 @@ public class LandingPredictionManager : MonoBehaviour
 
     private void DestroyVisuals()
     {
+        // Nothing to do if already torn down (or never created) - _hasValidPrediction is
+        // already false whenever _visualsDestroyed is true (it's only ever set true again by
+        // RecomputeTrajectory, and CreateVisuals - which flips _visualsDestroyed back to false -
+        // always runs in the same UpdateVisualPositions call before DestroyVisuals could next see
+        // it), so there's nothing left below worth doing.
+        if (_visualsDestroyed)
+            return;
+
         if (_lineGo != null)
             Destroy(_lineGo);
         _lineGo = null;
@@ -642,7 +704,16 @@ public class LandingPredictionManager : MonoBehaviour
         _markerGo = null;
         _marker = null;
 
+        // _line is gone (destroyed above), so the curve it referenced needs rebuilding against
+        // whatever new LineRenderer CreateVisuals hands out next time - otherwise the rebuild check
+        // in UpdateVisualPositions could see a non-null _widthCurve with a matching key count and
+        // skip reassigning it to the new _line entirely, leaving the new LineRenderer on its
+        // default (unset) widthCurve.
+        _widthCurve = null;
+        _widthCurveKeyCount = 0;
+
         _hasValidPrediction = false;
+        _visualsDestroyed = true;
     }
 
     private void OnDestroy()

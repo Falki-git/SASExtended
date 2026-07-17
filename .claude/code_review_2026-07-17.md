@@ -24,7 +24,7 @@ called out inline.
 | 4 | DONE | Event + singleton lifecycle asymmetry | Crash |
 | 5 | NOT STARTED | Unchecked async prefab-load callback | Crash |
 | 6 | NOT STARTED | A full config file write on every click in the window | Perf |
-| 7 | NOT STARTED | Per-frame waste in `LandingPredictionManager` | Perf |
+| 7 | DONE | Per-frame waste in `LandingPredictionManager` | Perf |
 | 8 | NOT STARTED | Replace the ~300-line `SetRotation` switch with a registry | Structure |
 | 9 | NOT STARTED | Extract the (now four times) duplicated offset row | Structure |
 | 10 | NOT STARTED | Move the landing predictor's math into `PureMath/` | Structure |
@@ -238,6 +238,22 @@ sample count or camera distance changes.
 **Recommendation:** hoist the gate outside the string (`if (ShouldLog) LogNoPrediction($"…")`, or
 pass the values and format lazily); track a `_visualsDestroyed` flag; cache the `AnimationCurve`
 and rebuild only on change.
+
+> **Implemented:** added `ShouldLogNoPrediction` (the same condition `LogNoPrediction` already
+> applied internally, now exposed) and guarded the `Update()` gated-off branch's interpolated
+> string with it, so it's built only when something will actually be logged - the disabled-by-
+> default path now allocates nothing per frame. `InFlightView` is read into a local once and reused
+> in both the condition and the log string instead of being evaluated twice. Added a
+> `_visualsDestroyed` bool so `DestroyVisuals()` no-ops once already torn down instead of re-running
+> its teardown every frame while gated off or while a recompute has no valid impact; `CreateVisuals`
+> clears it. For the render path, added a persistent `_widthCurve`/`_widthCurveKeyCount` pair:
+> `UpdateVisualPositions` now only reallocates the `Keyframe[]`/`AnimationCurve` when
+> `_trajectorySampleCount` actually changes (i.e. right after a recompute, not every frame), and
+> otherwise updates the existing curve's keys in place via `AnimationCurve.MoveKey` - widths
+> genuinely do need recomputing every frame (camera-to-vertex distance changes continuously), but
+> the curve object and its backing array no longer do. `DestroyVisuals` clears the cached curve too,
+> so a torn-down-and-recreated line always gets it reassigned rather than risking a stale reference
+> if the key count happens to coincide.
 
 ---
 
