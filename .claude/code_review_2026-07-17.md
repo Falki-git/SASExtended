@@ -27,7 +27,7 @@ called out inline.
 | 7 | DONE | Per-frame waste in `LandingPredictionManager` | Perf |
 | 8 | DONE | Replace the ~300-line `SetRotation` switch with a registry | Structure |
 | 9 | DONE | Extract the (now four times) duplicated offset row | Structure |
-| 10 | NOT STARTED | Move the landing predictor's math into `PureMath/` | Structure |
+| 10 | DONE | Move the landing predictor's math into `PureMath/` | Structure |
 
 ---
 
@@ -359,6 +359,23 @@ This is the **highest-value test target in the mod**: `.claude/landing_predictio
 documents a **ten-round** in-game debugging cycle for this math. Every one of those rounds required
 launching the game. The RK4 integration, coarse/fine bracketing, and bisection are all verifiable at
 the desk.
+
+> **Implemented, plus tests:** moved `MarchToImpact`/`IntegrateStep`/`Acceleration`/`Derotate` (and
+> `ImpactBisectionIterations`) verbatim into `Assets/SASExtended/Code/PureMath/LandingPredictionMath.cs`.
+> `MarchToImpact`'s signature dropped `CelestialBodyComponent body`/`ICoordinateSystem frame`/
+> `double groundCorrection` in favor of a single `Func<Vector3d, double> altitudeAt` (de-rotated
+> local-frame position in, terrain-relative altitude out) — `LandingPredictionManager.
+> RecomputeTrajectory` now builds that as a local function (`AltitudeAt`, capturing `body`/`frame`/
+> `groundCorrection`, the same three pieces the old private `AltitudeAt` method took as explicit
+> parameters) and passes it to both the coarse and fine `LandingPredictionMath.MarchToImpact` calls.
+> `SearchSteps`/`MarchSteps`/`TrajectorySampleCount` stayed on the manager (they're call-site
+> concerns - how many steps to march - not part of the algorithm itself). Added
+> `LandingPredictionMathTests.cs` (`Tests/EditMode/`, matching `AttitudeMathTests`/
+> `HoverThrottleMathTests`): `Acceleration`'s inverse-square direction, `IntegrateStep`'s RK4 holding
+> a circular orbit closed over 1000 steps, `Derotate`'s zero-input/magnitude-preservation/full-period
+> identities, and `MarchToImpact` against an analytically-solvable zero-gravity flat-ground descent
+> (immediate-impact, expected impact time/offset, no-crossing, and the raw `offsets[]` array) - the
+> exact class of scenario that used to need ten in-game rounds is now three lines of arrange/act/assert.
 
 ---
 
