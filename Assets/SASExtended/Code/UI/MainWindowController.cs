@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using KSP.UI.Binding;
 using SASExtended.Managers;
 using SASExtended.Models;
@@ -193,6 +194,65 @@ public class MainWindowController : MonoBehaviour
         // so we need to get the first child of the TemplateContainer to get our actual root VisualElement.
         _root = _window.rootVisualElement[0];
 
+        // Each section below wires one logical piece of the window (a tab's toggles, the H/P/R offset
+        // rows, the hover panel, ...) and is run through WireSection rather than called directly - see
+        // WireSection's own comment for why. Order matters for a few dependencies: WireTabs must run
+        // before WireHoverControlsPanel (it resolves _hoverControlsContainer), and the toggle-wiring
+        // sections must run before WireModeToggleRegistrations (it reads the fields they assign).
+        WireSection(nameof(WireWindowChrome), WireWindowChrome);
+        WireSection(nameof(WireGlobalModeToggles), WireGlobalModeToggles);
+        WireSection(nameof(WireTabs), WireTabs);
+        WireSection(nameof(WireOrbitToggles), WireOrbitToggles);
+        WireSection(nameof(WireSurfaceToggles), WireSurfaceToggles);
+        WireSection(nameof(WireTargetToggles), WireTargetToggles);
+        WireSection(nameof(WireStarToggles), WireStarToggles);
+        WireSection(nameof(WireHoldHoverToggles), WireHoldHoverToggles);
+        WireSection(nameof(WireModeToggleRegistrations), WireModeToggleRegistrations);
+        WireSection(nameof(WireOffsetRows), WireOffsetRows);
+        WireSection(nameof(WireHoverControlsPanel), WireHoverControlsPanel);
+        WireSection(nameof(WireInitialPanelState), WireInitialPanelState);
+        WireSection(nameof(WireFlightAxesToggles), WireFlightAxesToggles);
+        WireSection(nameof(WireLandingPredictionToggle), WireLandingPredictionToggle);
+        WireSection(nameof(WireSettingsButton), WireSettingsButton);
+        WireSection(nameof(WireCloseButton), WireCloseButton);
+    }
+
+    // Runs one logical piece of OnEnable's wiring in isolation. Require<T> below logs a specific error
+    // when a UXML element is missing but still returns null - the very next line that dereferences it
+    // (e.g. "_offToggle.SetEnabled(true)") then throws a plain NRE, same as the un-guarded _root.Q<>()
+    // calls this replaced always would have. What changes is the blast radius: previously that
+    // exception unwound all the way out of OnEnable, silently skipping every registration written
+    // after it in source order (see the ~63-unguarded-Q<>-calls finding in
+    // code_review_2026-07-17.md #3) - a single renamed UXML element could leave the whole window
+    // half-wired. Catching per-section here means one missing/renamed element only takes out its own
+    // section's wiring; every other section still runs.
+    private void WireSection(string sectionName, Action wire)
+    {
+        try
+        {
+            wire();
+        }
+        catch (Exception ex)
+        {
+            _LOGGER.LogError($"Failed to wire '{sectionName}' - related controls may be missing or non-functional. {ex}");
+        }
+    }
+
+    // Looks up a named UXML element under _root and logs a specific, actionable error if it's
+    // missing, rather than leaving the caller to dereference a bare Q<T>() null with a generic NRE.
+    // Still returns null on a miss - see WireSection for how the resulting exception is contained.
+    private T Require<T>(string name) where T : VisualElement => Require<T>(_root, name);
+
+    private T Require<T>(VisualElement container, string name) where T : VisualElement
+    {
+        var element = container.Q<T>(name);
+        if (element == null)
+            _LOGGER.LogError($"Expected UI element '{name}' ({typeof(T).Name}) not found in UXML.");
+        return element;
+    }
+
+    private void WireWindowChrome()
+    {
         var savedX = Settings.WindowPositionX.Value;
         var savedY = Settings.WindowPositionY.Value;
         if (savedX >= 0f && savedY >= 0f)
@@ -200,44 +260,53 @@ public class MainWindowController : MonoBehaviour
         else
             _root.CenterByDefault();
 
-        _statusLabel = _root.Q<Label>("status");
+        _statusLabel = Require<Label>("status");
         _statusLabel.text = string.Empty;
 
         // Persist the position once a drag finishes (dragging is the only way it ever changes).
         _root.RegisterCallback<PointerUpEvent>(evt => SaveWindowPosition());
+    }
 
-        _offToggle = _root.Q<SideToggleControl>("off");
+    private void WireGlobalModeToggles()
+    {
+        _offToggle = Require<SideToggleControl>("off");
         _offToggle.SetEnabled(true);
         _offToggle.SwitchToggleState(false, false);
-        _killrotToggle = _root.Q<SideToggleControl>("killrot");
+        _killrotToggle = Require<SideToggleControl>("killrot");
         _killrotToggle.SetEnabled(true);
         _killrotToggle.SwitchToggleState(false, false);
-        _nodeToggle = _root.Q<SideToggleControl>("node");
+        _nodeToggle = Require<SideToggleControl>("node");
         _nodeToggle.SetEnabled(true);
         _nodeToggle.SwitchToggleState(false, false);
+    }
 
-        _orbitTabToggle = _root.Q<TabToggleControl>("orb-tab");
+    private void WireTabs()
+    {
+        _orbitTabToggle = Require<TabToggleControl>("orb-tab");
         _orbitTabToggle.RegisterCallback<ClickEvent>(OnOrbitTabClicked);
-        _orbitContainer = _root.Q<VisualElement>("orb-container");
-        _surfaceTabToggle = _root.Q<TabToggleControl>("surf-tab");
+        _orbitContainer = Require<VisualElement>("orb-container");
+        _surfaceTabToggle = Require<TabToggleControl>("surf-tab");
         _surfaceTabToggle.RegisterCallback<ClickEvent>(OnSurfaceTabClicked);
-        _surfaceContainer = _root.Q<VisualElement>("surf-container");
-        _targetTabToggle = _root.Q<TabToggleControl>("tgt-tab");
+        _surfaceContainer = Require<VisualElement>("surf-container");
+        _targetTabToggle = Require<TabToggleControl>("tgt-tab");
         _targetTabToggle.RegisterCallback<ClickEvent>(OnTargetTabClicked);
-        _targetContainer = _root.Q<VisualElement>("tgt-container");
-        _specialTabToggle = _root.Q<TabToggleControl>("spec-tab");
+        _targetContainer = Require<VisualElement>("tgt-container");
+        _specialTabToggle = Require<TabToggleControl>("spec-tab");
         _specialTabToggle.RegisterCallback<ClickEvent>(OnSpecialTabClicked);
-        _specialContainer = _root.Q<VisualElement>("spec-container");
+        _specialContainer = Require<VisualElement>("spec-container");
 
-        _attitudeControlsContainer = _root.Q<VisualElement>("attitude-controls");
-        _hoverControlsContainer = _root.Q<VisualElement>("hover-controls");
+        _attitudeControlsContainer = Require<VisualElement>("attitude-controls");
+        _hoverControlsContainer = Require<VisualElement>("hover-controls");
+    }
 
-        _progradeToggle = _root.Q<SideToggleControl>("prograde");
-        _normalToggle = _root.Q<SideToggleControl>("normal");
-        _radialInToggle = _root.Q<SideToggleControl>("radialin");
-        _retrogradeToggle = _root.Q<SideToggleControl>("retrograde");
-        _antinormalToggle = _root.Q<SideToggleControl>("antinormal");
-        _radialOutToggle = _root.Q<SideToggleControl>("radialout");
+    private void WireOrbitToggles()
+    {
+        _progradeToggle = Require<SideToggleControl>("prograde");
+        _normalToggle = Require<SideToggleControl>("normal");
+        _radialInToggle = Require<SideToggleControl>("radialin");
+        _retrogradeToggle = Require<SideToggleControl>("retrograde");
+        _antinormalToggle = Require<SideToggleControl>("antinormal");
+        _radialOutToggle = Require<SideToggleControl>("radialout");
 
         // Each ORB button's LED color family is intrinsic to that button (prograde is always the
         // prograde family, etc.) - assign it once here rather than on every click. The family class
@@ -250,30 +319,48 @@ public class MainWindowController : MonoBehaviour
         _antinormalToggle.SetSasColorMode(SasColorMode.Normal);
         _radialInToggle.SetSasColorMode(SasColorMode.Radial);
         _radialOutToggle.SetSasColorMode(SasColorMode.Radial);
+    }
 
-        _svelPlusToggle = _root.Q<SideToggleControl>("svelplus");
-        _svelMinusToggle = _root.Q<SideToggleControl>("svelminus");
-        _surfToggle = _root.Q<SideToggleControl>("surf");
-        _hvelPlusToggle = _root.Q<SideToggleControl>("hvelplus");
-        _hvelMinusToggle = _root.Q<SideToggleControl>("hvelminus");
-        _upToggle = _root.Q<SideToggleControl>("up");
+    private void WireSurfaceToggles()
+    {
+        _svelPlusToggle = Require<SideToggleControl>("svelplus");
+        _svelMinusToggle = Require<SideToggleControl>("svelminus");
+        _surfToggle = Require<SideToggleControl>("surf");
+        _hvelPlusToggle = Require<SideToggleControl>("hvelplus");
+        _hvelMinusToggle = Require<SideToggleControl>("hvelminus");
+        _upToggle = Require<SideToggleControl>("up");
+    }
 
-        _targetPlusToggle = _root.Q<SideToggleControl>("tgtplus");
-        _relativeVelocityPlusToggle = _root.Q<SideToggleControl>("rvelplus");
-        _parPlusToggle = _root.Q<SideToggleControl>("parplus");
-        _targetMinusToggle = _root.Q<SideToggleControl>("tgtminus");
-        _relativeVelocityMinusToggle = _root.Q<SideToggleControl>("rvelminus");
-        _parMinusToggle = _root.Q<SideToggleControl>("parminus");
+    private void WireTargetToggles()
+    {
+        _targetPlusToggle = Require<SideToggleControl>("tgtplus");
+        _relativeVelocityPlusToggle = Require<SideToggleControl>("rvelplus");
+        _parPlusToggle = Require<SideToggleControl>("parplus");
+        _targetMinusToggle = Require<SideToggleControl>("tgtminus");
+        _relativeVelocityMinusToggle = Require<SideToggleControl>("rvelminus");
+        _parMinusToggle = Require<SideToggleControl>("parminus");
+    }
 
-        _starPlusToggle = _root.Q<SideToggleControl>("starplus");
-        _starMinusToggle = _root.Q<SideToggleControl>("starminus");
+    private void WireStarToggles()
+    {
+        _starPlusToggle = Require<SideToggleControl>("starplus");
+        _starMinusToggle = Require<SideToggleControl>("starminus");
+    }
 
-        _holdToggle = _root.Q<SideToggleControl>("hold");
-        _hoverToggle = _root.Q<SideToggleControl>("hover");
+    private void WireHoldHoverToggles()
+    {
+        _holdToggle = Require<SideToggleControl>("hold");
+        _hoverToggle = Require<SideToggleControl>("hover");
+    }
 
-        // Every mode toggle is mutually exclusive with every other one, across all tabs - build the
-        // full set once here so ClearAllModeToggles/RegisterModeButton don't need per-button
-        // boilerplate to know what else to switch off.
+    private void WireModeToggleRegistrations()
+    {
+        // Every mutually-exclusive mode toggle (global modes + all direction buttons across all tabs),
+        // used by ClearAllModeToggles/RegisterModeButton so only one is ever shown toggled on. Nulls
+        // (a toggle whose UXML element was missing - already logged by Require<T> in whichever
+        // Wire*Toggles section assigned it) are filtered out rather than left in the array: they can't
+        // meaningfully participate in mutual exclusion, and ClearAllModeToggles would otherwise NRE on
+        // them every single mode switch.
         _allModeToggles = new[]
         {
             _offToggle, _killrotToggle, _nodeToggle,
@@ -282,7 +369,7 @@ public class MainWindowController : MonoBehaviour
             _targetPlusToggle, _relativeVelocityPlusToggle, _parPlusToggle, _targetMinusToggle, _relativeVelocityMinusToggle, _parMinusToggle,
             _starPlusToggle, _starMinusToggle,
             _holdToggle, _hoverToggle
-        };
+        }.Where(toggle => toggle != null).ToArray();
 
         RegisterModeButton(_offToggle, () => SASManager.Instance.SetSASOff());
         RegisterModeButton(_killrotToggle, () => SASManager.Instance.SetSASKillrot());
@@ -318,90 +405,95 @@ public class MainWindowController : MonoBehaviour
 
         RegisterModeButton(_holdToggle, () => SASManager.Instance.SetHold());
         RegisterModeButton(_hoverToggle, () => SASManager.Instance.SetHover());
+    }
 
-        _xToggle = _root.Q<SideToggleControl>("x-toggle");
+    private void WireOffsetRows()
+    {
+        _xToggle = Require<SideToggleControl>("x-toggle");
         _xToggle.RegisterCallback<ClickEvent>(OnXToggleClicked);
-        _xValue = _root.Q<FloatField>("x-value");
+        _xValue = Require<FloatField>("x-value");
         _xValue.RegisterValueChangedCallback(OnXChanged);
-        _yToggle = _root.Q<SideToggleControl>("y-toggle");
+        _yToggle = Require<SideToggleControl>("y-toggle");
         _yToggle.RegisterCallback<ClickEvent>(OnYToggleClicked);
-        _yValue = _root.Q<FloatField>("y-value");
+        _yValue = Require<FloatField>("y-value");
         _yValue.RegisterValueChangedCallback(OnYChanged);
-        _zToggle = _root.Q<SideToggleControl>("z-toggle");
+        _zToggle = Require<SideToggleControl>("z-toggle");
         _zToggle.RegisterCallback<ClickEvent>(OnZToggleClicked);
-        _zValue = _root.Q<FloatField>("z-value");
+        _zValue = Require<FloatField>("z-value");
         _zValue.RegisterValueChangedCallback(OnZChanged);
 
-        _xMinus = _root.Q<Button>("x-minus");
+        _xMinus = Require<Button>("x-minus");
         _xMinus.RegisterCallback<ClickEvent>(evt =>
         {
             _xValue.value--;
         });
-        _xPlus = _root.Q<Button>("x-plus");
+        _xPlus = Require<Button>("x-plus");
         _xPlus.RegisterCallback<ClickEvent>(evt =>
         {
             _xValue.value++;
         });
-        _xFirst = _root.Q<Button>("x-first");
+        _xFirst = Require<Button>("x-first");
         _xFirst.RegisterCallback<ClickEvent>(evt =>
         {
             _xValue.value = 0;
         });
-        _xSecond = _root.Q<Button>("x-second");
+        _xSecond = Require<Button>("x-second");
         _xSecond.RegisterCallback<ClickEvent>(evt =>
         {
             _xValue.value = 90;
         });
 
-        _yMinus = _root.Q<Button>("y-minus");
+        _yMinus = Require<Button>("y-minus");
         _yMinus.RegisterCallback<ClickEvent>(evt =>
         {
             _yValue.value--;
         });
-        _yPlus = _root.Q<Button>("y-plus");
+        _yPlus = Require<Button>("y-plus");
         _yPlus.RegisterCallback<ClickEvent>(evt =>
         {
             _yValue.value++;
         });
-        _yFirst = _root.Q<Button>("y-first");
+        _yFirst = Require<Button>("y-first");
         _yFirst.RegisterCallback<ClickEvent>(evt =>
         {
             _yValue.value = 0;
         });
-        _ySecond = _root.Q<Button>("y-second");
+        _ySecond = Require<Button>("y-second");
         _ySecond.RegisterCallback<ClickEvent>(evt =>
         {
             _yValue.value = 90;
         });
 
-        _zMinus = _root.Q<Button>("z-minus");
+        _zMinus = Require<Button>("z-minus");
         _zMinus.RegisterCallback<ClickEvent>(evt =>
         {
             _zValue.value--;
         });
-        _zPlus = _root.Q<Button>("z-plus");
+        _zPlus = Require<Button>("z-plus");
         _zPlus.RegisterCallback<ClickEvent>(evt =>
         {
             _zValue.value++;
         });
-        _zFirst = _root.Q<Button>("z-first");
+        _zFirst = Require<Button>("z-first");
         _zFirst.RegisterCallback<ClickEvent>(evt =>
         {
             _zValue.value = 0;
         });
-        _zSecond = _root.Q<Button>("z-second");
+        _zSecond = Require<Button>("z-second");
         _zSecond.RegisterCallback<ClickEvent>(evt =>
         {
             _zValue.value = Mathf.Round((float)SASManager.Instance.CurrentRollOffset);
         });
+    }
 
-
+    private void WireHoverControlsPanel()
+    {
         // Purely a label ("VER VEL" is always active in hover, unlike Heading/Pitch/Roll there's no
         // per-axis enable/disable concept for it) - keep it disabled so it can't be toggled off.
-        _hoverVerticalVelocityToggle = _hoverControlsContainer.Q<SideToggleControl>("ver-vel-toggle");
+        _hoverVerticalVelocityToggle = Require<SideToggleControl>(_hoverControlsContainer, "ver-vel-toggle");
         _hoverVerticalVelocityToggle.SetEnabled(false);
 
-        _hoverVerticalVelocityValue = _hoverControlsContainer.Q<FloatField>("ver-vel-value");
+        _hoverVerticalVelocityValue = Require<FloatField>(_hoverControlsContainer, "ver-vel-value");
         // Set before registering the callback below, so displaying the remembered value on window
         // creation doesn't immediately re-trigger a (harmless but pointless) save.
         _hoverVerticalVelocityValue.value = Settings.HoverVerticalVelocity.Value;
@@ -411,23 +503,23 @@ public class MainWindowController : MonoBehaviour
             Settings.HoverVerticalVelocity.Value = evt.newValue;
         });
 
-        _hoverVerticalVelocityMinus = _hoverControlsContainer.Q<Button>("ver-vel-minus");
+        _hoverVerticalVelocityMinus = Require<Button>(_hoverControlsContainer, "ver-vel-minus");
         _hoverVerticalVelocityMinus.RegisterCallback<ClickEvent>(evt =>
         {
             _hoverVerticalVelocityValue.value--;
         });
-        _hoverVerticalVelocityPlus = _hoverControlsContainer.Q<Button>("ver-vel-plus");
+        _hoverVerticalVelocityPlus = Require<Button>(_hoverControlsContainer, "ver-vel-plus");
         _hoverVerticalVelocityPlus.RegisterCallback<ClickEvent>(evt =>
         {
             _hoverVerticalVelocityValue.value++;
         });
-        _hoverVerticalVelocityZero = _hoverControlsContainer.Q<Button>("ver-vel-zero");
+        _hoverVerticalVelocityZero = Require<Button>(_hoverControlsContainer, "ver-vel-zero");
         _hoverVerticalVelocityZero.RegisterCallback<ClickEvent>(evt =>
         {
             _hoverVerticalVelocityValue.value = 0;
         });
 
-        _cancelHorizontalVelocityToggle = _hoverControlsContainer.Q<SideToggleControl>("cancel-horizontal-velocity");
+        _cancelHorizontalVelocityToggle = Require<SideToggleControl>(_hoverControlsContainer, "cancel-horizontal-velocity");
         _cancelHorizontalVelocityToggle.SetEnabled(true);
         _cancelHorizontalVelocityToggle.SwitchToggleState(true, false);
         _cancelHorizontalVelocityToggle.RegisterCallback<ClickEvent>(evt =>
@@ -435,32 +527,35 @@ public class MainWindowController : MonoBehaviour
             SASManager.Instance.CancelHorizontalVelocity = _cancelHorizontalVelocityToggle.IsToggled;
         });
 
-        _hoverZToggle = _hoverControlsContainer.Q<SideToggleControl>("hover-z-toggle");
+        _hoverZToggle = Require<SideToggleControl>(_hoverControlsContainer, "hover-z-toggle");
         _hoverZToggle.RegisterCallback<ClickEvent>(OnHoverZToggleClicked);
-        _hoverZValue = _hoverControlsContainer.Q<FloatField>("hover-z-value");
+        _hoverZValue = Require<FloatField>(_hoverControlsContainer, "hover-z-value");
         _hoverZValue.RegisterValueChangedCallback(OnHoverZChanged);
 
-        _hoverZMinus = _hoverControlsContainer.Q<Button>("hover-z-minus");
+        _hoverZMinus = Require<Button>(_hoverControlsContainer, "hover-z-minus");
         _hoverZMinus.RegisterCallback<ClickEvent>(evt =>
         {
             _hoverZValue.value--;
         });
-        _hoverZPlus = _hoverControlsContainer.Q<Button>("hover-z-plus");
+        _hoverZPlus = Require<Button>(_hoverControlsContainer, "hover-z-plus");
         _hoverZPlus.RegisterCallback<ClickEvent>(evt =>
         {
             _hoverZValue.value++;
         });
-        _hoverZFirst = _hoverControlsContainer.Q<Button>("hover-z-first");
+        _hoverZFirst = Require<Button>(_hoverControlsContainer, "hover-z-first");
         _hoverZFirst.RegisterCallback<ClickEvent>(evt =>
         {
             _hoverZValue.value = 0;
         });
-        _hoverZSecond = _hoverControlsContainer.Q<Button>("hover-z-second");
+        _hoverZSecond = Require<Button>(_hoverControlsContainer, "hover-z-second");
         _hoverZSecond.RegisterCallback<ClickEvent>(evt =>
         {
             _hoverZValue.value = Mathf.Round((float)SASManager.Instance.CurrentRollOffset);
         });
+    }
 
+    private void WireInitialPanelState()
+    {
         // Match the containers' initial visibility/colors to the starting (non-hover, no-mode) state.
         UpdatePanelForMode();
         UpdateAttitudeColors();
@@ -468,15 +563,14 @@ public class MainWindowController : MonoBehaviour
         // starts NODE/TGT-mode buttons greyed out; the first Update() tick corrects them once real
         // HasManeuverNode/HasTarget values are available.
         UpdateNodeTargetAvailability();
+    }
 
-        WireFlightAxesToggles();
-        WireLandingPredictionToggle();
-        WireSettingsButton();
-
-        // Get the close button from the window. Uses RegisterCallback<ClickEvent> rather than the
-        // `.clicked` action, matching every other clickable element in this file (x/y/z-minus/plus/
-        // first, tab toggles, etc.) rather than mixing two different click APIs.
-        var closeButton = _root.Q<Button>("close-button");
+    private void WireCloseButton()
+    {
+        // Uses RegisterCallback<ClickEvent> rather than the `.clicked` action, matching every other
+        // clickable element in this file (x/y/z-minus/plus/first, tab toggles, etc.) rather than
+        // mixing two different click APIs.
+        var closeButton = Require<Button>("close-button");
         closeButton.RegisterCallback<ClickEvent>(evt =>
         {
             _LOGGER.LogInfo("Close button clicked.");
@@ -631,6 +725,11 @@ public class MainWindowController : MonoBehaviour
     // instead of a ~15-line copy-pasted handler.
     private void RegisterModeButton(SideToggleControl toggle, Action setMode)
     {
+        // toggle is null when its UXML element failed to resolve - Require<T> already logged that in
+        // whichever Wire*Toggles section assigned it (see WireModeToggleRegistrations). Nothing to wire.
+        if (toggle == null)
+            return;
+
         toggle.RegisterCallback<ClickEvent>(evt =>
         {
             // SideToggleControl's own ClickEvent handler already no-ops on a disabled toggle, but it

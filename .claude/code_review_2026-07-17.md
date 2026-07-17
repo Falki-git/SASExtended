@@ -20,7 +20,7 @@ called out inline.
 |---|---|---|---|
 | 1 | DONE | Resolve the vessel once per tick instead of 63 times | Crash / perf |
 | 2 | DONE | `GetParentStar` returns null → per-tick NRE | Crash |
-| 3 | NOT STARTED | ~63 unguarded `_root.Q<…>()` calls in `OnEnable` | Crash |
+| 3 | DONE | ~63 unguarded `_root.Q<…>()` calls in `OnEnable` | Crash |
 | 4 | NOT STARTED | Event + singleton lifecycle asymmetry | Crash |
 | 5 | NOT STARTED | Unchecked async prefab-load callback | Crash |
 | 6 | NOT STARTED | A full config file write on every click in the window | Perf |
@@ -115,6 +115,21 @@ splitting `OnEnable` so one failed section can't take out the rest.
 > `MainWindowController.cs:438-454`), each immediately `.RegisterCallback`'d. The count went from
 > ~50 to 63. New code is still being written in the unguarded style, which makes the helper more
 > valuable, not less.
+
+> **Implemented:** added `Require<T>(name)` (and a `Require<T>(container, name)` overload for
+> `_hoverControlsContainer` lookups), which logs a specific "element not found" error instead of a
+> bare `Q<T>()` returning null for the next line to NRE on. `OnEnable` itself now only sets up
+> `_window`/`_root` and then calls a sequence of `WireSection(name, action)` invocations, one per
+> logical group (`WireGlobalModeToggles`, `WireTabs`, `WireOrbitToggles`, `WireOffsetRows`,
+> `WireHoverControlsPanel`, etc. — 16 sections total, all former OnEnable content moved into them
+> verbatim). `WireSection` wraps each in try/catch and logs which named section failed, so a missing
+> element still throws (same NRE as before) but only aborts its own section instead of unwinding out
+> of `OnEnable` and skipping every registration written after it. `_allModeToggles` now filters out
+> nulls (`.Where(t => t != null)`) so a toggle that failed to resolve doesn't NRE
+> `ClearAllModeToggles` on every subsequent mode switch, and `RegisterModeButton` no-ops on a null
+> toggle for the same reason. The three call sites that already null-guarded themselves
+> (`WireFlightAxesToggles`, `WireLandingPredictionToggle`, `WireSettingsButton`) were left as-is and
+> are now just invoked through the same `WireSection` wrapper for consistency.
 
 ### 4. Event + singleton lifecycle asymmetry
 `MainWindowController.cs:504-507`, `SASManager.cs:17`
