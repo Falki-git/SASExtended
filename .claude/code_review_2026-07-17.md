@@ -19,7 +19,7 @@ called out inline.
 | # | Status | Recommendation | Category |
 |---|---|---|---|
 | 1 | DONE | Resolve the vessel once per tick instead of 63 times | Crash / perf |
-| 2 | NOT STARTED | `GetParentStar` returns null → per-tick NRE | Crash |
+| 2 | DONE | `GetParentStar` returns null → per-tick NRE | Crash |
 | 3 | NOT STARTED | ~63 unguarded `_root.Q<…>()` calls in `OnEnable` | Crash |
 | 4 | NOT STARTED | Event + singleton lifecycle asymmetry | Crash |
 | 5 | NOT STARTED | Unchecked async prefab-load callback | Crash |
@@ -82,6 +82,16 @@ branch, so the handler doesn't actually handle anything.
 **Recommendation:** `bool TryGetParentStar(VesselComponent, out CelestialBodyComponent)` + a
 `DisengageForLostReference()` path, and **cache the star at engage time** rather than walking the
 body tree every tick — the parent star cannot change while a mode is engaged.
+
+> **Implemented:** `GetParentStar` replaced with `static bool TryGetParentStar(VesselComponent, out
+> CelestialBodyComponent)` (no try/catch — the `while` guards `body != null` directly, since the
+> confirmed failure is a null `referenceBody`, not an exception). `SetMode` resolves it once at
+> engage time via a new `IsStarMode(mode)` check, refusing to engage (logged warning, no state
+> change) if the star can't be found; the result is cached in `_engagedParentStar` and reused by
+> both `SpecialStarPlus`/`SpecialStarMinus` cases in `SetRotation` instead of a per-tick tree walk.
+> `Update()` gained a defensive `IsStarMode(AttitudeMode) && _engagedParentStar == null` check
+> mirroring the existing Maneuver/Target lost-reference guards, and `ResetPerVesselState` clears the
+> cached star on disengage.
 
 ### 3. ~63 unguarded `_root.Q<…>()` calls in `OnEnable`
 `Assets/SASExtended/Code/UI/MainWindowController.cs:209+`

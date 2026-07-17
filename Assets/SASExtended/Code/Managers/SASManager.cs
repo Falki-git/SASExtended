@@ -81,6 +81,9 @@ public class SASManager : MonoBehaviour
                 AttitudeMode.TargetRvelPlus or AttitudeMode.TargetRvelMinus or
                 AttitudeMode.TargetParPlus or AttitudeMode.TargetParMinus;
 
+    private static bool IsStarMode(AttitudeMode mode) =>
+        mode is AttitudeMode.SpecialStarPlus or AttitudeMode.SpecialStarMinus;
+
     public double RefreshInterval = 0;
     public double RefreshInterval_short = 0.02;
     public double RefreshInterval_mid = 0.05;
@@ -185,6 +188,14 @@ public class SASManager : MonoBehaviour
     // vessel.
     private VesselComponent _engagedVessel;
 
+    // The parent star resolved via TryGetParentStar at the moment SpecialStarPlus/SpecialStarMinus
+    // was engaged (see SetMode) - the star cannot change while a mode stays engaged, so this is
+    // resolved once instead of walking the body tree every tick in SetRotation. Also doubles as the
+    // "is the star mode still viable" signal: null means TryGetParentStar failed at engage time (mode
+    // never actually engaged - see SetMode) or, defensively, some later invalidation; Update() checks
+    // this the same way it checks HasManeuver/HasTargetObject for Maneuver/Target modes.
+    private CelestialBodyComponent _engagedParentStar;
+
     // Tracks the no-vessel -> vessel transition for the stock-SAS reconciliation check below -
     // deliberately separate from _engagedVessel, which only ever refers to a vessel SAS Extended
     // itself engaged. See that check's comment for why this transition specifically matters.
@@ -266,6 +277,15 @@ public class SASManager : MonoBehaviour
         if (IsTargetMode(AttitudeMode) && !telemetry.HasTargetObject)
         {
             DisengageForLostReference("Target was lost");
+            return;
+        }
+
+        // _engagedParentStar is resolved once at engage time (see SetMode) and cannot legitimately go
+        // null afterwards while a star mode stays engaged - this is a defensive backstop, not the
+        // primary guard (SetMode already refuses to engage a star mode it can't resolve a star for).
+        if (IsStarMode(AttitudeMode) && _engagedParentStar == null)
+        {
+            DisengageForLostReference("Parent star could not be determined");
             return;
         }
 
@@ -504,16 +524,18 @@ public class SASManager : MonoBehaviour
             // in-game.
             case AttitudeMode.SpecialStarPlus:
             {
-                var sunBody = GetParentStar(vessel);
-                var sun = Vector.Reframed(Vector.normalize(Position.Delta(sunBody.Position, telemetry.RootPosition)), referenceFrame);
+                // _engagedParentStar is resolved once at engage time (see SetMode) rather than walked
+                // from scratch every tick - the parent star can't change while a mode stays engaged,
+                // and Update()'s IsStarMode guard above already disengages if it's ever null here.
+                var sun = Vector.Reframed(Vector.normalize(Position.Delta(_engagedParentStar.Position, telemetry.RootPosition)), referenceFrame);
                 _rotation = BuildPointingRotation(vessel, sun, upwards, out effX, out effY, out effZ);
                 loggedTarget = sun;
                 break;
             }
             case AttitudeMode.SpecialStarMinus:
             {
-                var sunBody = GetParentStar(vessel);
-                var antiSun = Vector.negate(Vector.Reframed(Vector.normalize(Position.Delta(sunBody.Position, telemetry.RootPosition)), referenceFrame));
+                // See SpecialStarPlus above re: _engagedParentStar.
+                var antiSun = Vector.negate(Vector.Reframed(Vector.normalize(Position.Delta(_engagedParentStar.Position, telemetry.RootPosition)), referenceFrame));
                 _rotation = BuildPointingRotation(vessel, antiSun, upwards, out effX, out effY, out effZ);
                 loggedTarget = antiSun;
                 break;
@@ -851,6 +873,18 @@ public class SASManager : MonoBehaviour
         if (!TryGetVesselToEngage(mode.ToString(), out var vessel))
             return;
 
+        // Star modes need a resolvable parent star to point at - resolve (and cache) it now, before
+        // any state changes below, and refuse to engage rather than latching a mode that would
+        // immediately auto-disengage next tick (see the IsStarMode guard in Update()). Confirmed via
+        // decompile that CelestialBodyComponent.referenceBody returns null at the root of the body
+        // tree, which is the actual (rare) failure case here - not an exception, so no try/catch.
+        CelestialBodyComponent parentStar = null;
+        if (IsStarMode(mode) && !TryGetParentStar(vessel, out parentStar))
+        {
+            _LOGGER.LogWarning($"Cannot engage {mode}: could not determine the vessel's parent star.");
+            return;
+        }
+
         // Snapshot heading/pitch/roll/hover (altitude, vertical speed) state at the exact moment any
         // mode engages - always-on (LogInfo, not gated behind VerboseLoggingEnabled) so there's a
         // ground-truth starting point for every mode switch even with verbose per-tick logging off.
@@ -867,6 +901,7 @@ public class SASManager : MonoBehaviour
             $"altitude={vessel.AltitudeFromSurface:F1}m verticalSpeed={vessel.VerticalSrfSpeed:F2}m/s");
         AttitudeMode = mode;
         _engagedVessel = vessel;
+        _engagedParentStar = parentStar;
         // Seed the slew setpoint from the vessel's real current attitude so the very first
         // AdvanceCommandedRotation step starts from reality, not a stale rotation left over from a
         // previous mode/vessel - see _commandedRotation's field comment.
@@ -946,6 +981,7 @@ public class SASManager : MonoBehaviour
         _lastVerticalSpeedForDerivative = 0;
         _filteredThrustDrivenAccel = 0;
         HoverThrottle = 0;
+        _engagedParentStar = null;
     }
 
     public void SetSASKillrot()
@@ -1102,23 +1138,21 @@ public class SASManager : MonoBehaviour
     private static double Clamp(double value, double min, double max)
         => value < min ? min : (value > max ? max : value);
 
-    private CelestialBodyComponent GetParentStar(VesselComponent vessel)
+    // Walks up the reference-body chain to the root star. Confirmed via decompiling
+    // CelestialBodyComponent that referenceBody is null at the root of the body tree - so a vessel
+    // whose mainBody chain never reaches a star (should not normally happen, but nothing here
+    // guarantees it) ends the walk on body == null rather than an exception. Returns false in that
+    // case instead of a null CelestialBodyComponent the caller might dereference unchecked.
+    private static bool TryGetParentStar(VesselComponent vessel, out CelestialBodyComponent star)
     {
         var body = vessel.mainBody;
-
-        try
+        while (body != null && !body.IsStar)
         {
-            while (!body.IsStar)
-            {
-                body = body.referenceBody;
-            }
-        }
-        catch (Exception ex)
-        {
-            _LOGGER.LogError($"Unable to fetch parent star for vessel {vessel.Name}. How is this possible?! Exception: {ex.Message}");
+            body = body.referenceBody;
         }
 
-        return body;
+        star = body;
+        return body != null;
     }
 
     // Public: also read by MainWindowController for the status readout's generic angle-to-target line
