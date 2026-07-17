@@ -155,9 +155,6 @@ public class SASManager : MonoBehaviour
     private double _lastRefreshTime = 0;
 
     private VesselComponent _vessel => GameManager.Instance?.Game?.ViewController?.GetActiveSimVessel();
-    // The Redux Assembly-CSharp isn't publicized, so we reach the telemetry through the public
-    // SimulationObject.Telemetry accessor instead of the private VesselComponent._telemetryComponent field.
-    private TelemetryComponent _telemetry => _vessel.SimulationObject.Telemetry;
     private Rotation _rotation;
     // Setpoint actually fed to LockRotation - each tick, AdvanceCommandedRotation recomputes this
     // fresh as "the vessel's ACTUAL current attitude, moved up to AttitudeSlewMaxRate deg/s toward
