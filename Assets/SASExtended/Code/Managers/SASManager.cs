@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using KSP.Api;
 using KSP.Game;
 using KSP.Sim;
 using KSP.Sim.impl;
@@ -14,7 +16,7 @@ public class SASManager : MonoBehaviour
 {
     private SASManager() { }
 
-    public static SASManager Instance { get; set; }
+    public static SASManager Instance { get; private set; }
 
     // Fired when SASManager disengages itself (vessel switch/undock/revert/scene-exit - see
     // DisengageForVesselChange) rather than the player clicking a toggle. MainWindowController
@@ -24,19 +26,65 @@ public class SASManager : MonoBehaviour
 
     public double X = 0, Y = 0, Z = 0;
     public bool XEnabled = true, YEnabled = true, ZEnabled = true;
+
+    // Hover's OWN Roll-enable flag, deliberately separate from the shared ZEnabled above (which
+    // every other mode uses). ZEnabled is session-persistent and carries over as-is between mode
+    // switches - forcing it off specifically when Hover engages (an earlier version of this) leaked
+    // into whatever mode you switched to next, turning Roll off there too. Defaults to false (Hover
+    // starts with roll free every time you engage it) without touching ZEnabled at all, so every
+    // other mode's Roll toggle keeps behaving exactly as before.
+    public bool HoverRollEnabled = false;
+
+    // The vessel's actual current roll, relative to whichever basis the active mode is pointing
+    // from - i.e. exactly what the "free" branch (ZEnabled/HoverRollEnabled) would already be
+    // tracking if Roll were disabled right now. Updated every tick by ApplyOffsets and
+    // AttitudeMode.Hover regardless of whether roll is currently locked, so the Roll row's CUR
+    // button can read it at any time and set Z to match - "lock in whatever roll I'm already at."
+    public double CurrentRollOffset;
+
     public AttitudeMode AttitudeMode = AttitudeMode.None;
     public bool IsHoverActive => AttitudeMode == AttitudeMode.Hover;
 
+    // True while any SAS Extended mode is actively driving the vessel (i.e. not OFF/None). Read by
+    // FlightAxesVisualizer to decide whether the "commanded attitude" arrow should be shown.
+    public bool IsEngaged => AttitudeMode != AttitudeMode.None;
+
+    // The exact Rotation last handed to SAS.LockRotation this tick - the slew-limited setpoint
+    // (_commandedRotation), NOT the raw per-tick target (_rotation). Exposed for FlightAxesVisualizer's
+    // "commanded attitude" arrow so the visual matches what the autopilot is actually being told to
+    // hold. Holds a stale value once disengaged, so consumers must gate on IsEngaged first.
+    public Rotation CommandedRotation => _commandedRotation;
+
+    // The raw per-tick target the active mode wants to point at (_rotation), BEFORE the slew-rate limit
+    // (AdvanceCommandedRotation) is applied - i.e. the final orientation the mode is steering toward,
+    // which CommandedRotation slews up to over multiple ticks. Exposed for FlightAxesVisualizer's
+    // "target attitude" arrow; the two arrows diverge during a reorientation and coincide once settled.
+    // Holds a stale value once disengaged, so consumers must gate on IsEngaged first.
+    public Rotation TargetRotation => _rotation;
+
     // Read by MainWindowController to grey out the NODE button / TGT-tab mode buttons and by
     // Update() below to auto-disengage if the node/target disappears while its mode is active.
-    // _vessel is guarded first since _telemetry (a property, not a field) NREs on a null _vessel.
-    public bool HasManeuverNode => _vessel != null && _telemetry.HasManeuver;
-    public bool HasTarget => _vessel != null && _telemetry.HasTargetObject;
+    // _vessel is a live lookup (GameManager...GetActiveSimVessel()), not a cached field - resolve it
+    // ONCE into a local before using it twice, rather than checking "_vessel != null" and then letting
+    // _telemetry independently re-resolve _vessel for the actual read. Two independent resolutions of
+    // a live lookup can (in principle) disagree - the guard would then be checking a different vessel
+    // than the one _telemetry ends up NREing on.
+    public bool HasManeuverNode
+    {
+        get { var vessel = _vessel; return vessel != null && vessel.SimulationObject.Telemetry.HasManeuver; }
+    }
+    public bool HasTarget
+    {
+        get { var vessel = _vessel; return vessel != null && vessel.SimulationObject.Telemetry.HasTargetObject; }
+    }
 
     private static bool IsTargetMode(AttitudeMode mode) =>
         mode is AttitudeMode.TargetPlus or AttitudeMode.TargetMinus or
                 AttitudeMode.TargetRvelPlus or AttitudeMode.TargetRvelMinus or
                 AttitudeMode.TargetParPlus or AttitudeMode.TargetParMinus;
+
+    private static bool IsStarMode(AttitudeMode mode) =>
+        mode is AttitudeMode.SpecialStarPlus or AttitudeMode.SpecialStarMinus;
 
     public double RefreshInterval = 0;
     public double RefreshInterval_short = 0.02;
@@ -112,9 +160,6 @@ public class SASManager : MonoBehaviour
     private double _lastRefreshTime = 0;
 
     private VesselComponent _vessel => GameManager.Instance?.Game?.ViewController?.GetActiveSimVessel();
-    // The Redux Assembly-CSharp isn't publicized, so we reach the telemetry through the public
-    // SimulationObject.Telemetry accessor instead of the private VesselComponent._telemetryComponent field.
-    private TelemetryComponent _telemetry => _vessel.SimulationObject.Telemetry;
     private Rotation _rotation;
     // Setpoint actually fed to LockRotation - each tick, AdvanceCommandedRotation recomputes this
     // fresh as "the vessel's ACTUAL current attitude, moved up to AttitudeSlewMaxRate deg/s toward
@@ -145,6 +190,14 @@ public class SASManager : MonoBehaviour
     // vessel.
     private VesselComponent _engagedVessel;
 
+    // The parent star resolved via TryGetParentStar at the moment SpecialStarPlus/SpecialStarMinus
+    // was engaged (see SetMode) - the star cannot change while a mode stays engaged, so this is
+    // resolved once instead of walking the body tree every tick in SetRotation. Also doubles as the
+    // "is the star mode still viable" signal: null means TryGetParentStar failed at engage time (mode
+    // never actually engaged - see SetMode) or, defensively, some later invalidation; Update() checks
+    // this the same way it checks HasManeuver/HasTargetObject for Maneuver/Target modes.
+    private CelestialBodyComponent _engagedParentStar;
+
     // Tracks the no-vessel -> vessel transition for the stock-SAS reconciliation check below -
     // deliberately separate from _engagedVessel, which only ever refers to a vessel SAS Extended
     // itself engaged. See that check's comment for why this transition specifically matters.
@@ -158,6 +211,18 @@ public class SASManager : MonoBehaviour
         // this on re-engage (see the field comment above), so it must not be reloaded from config here
         // on every engage, just the one time the vessel/session starts.
         HoverTargetVerticalSpeed = Settings.HoverVerticalVelocity.Value;
+    }
+
+    // Mirrors FlightAxesVisualizer/LandingPredictionManager's own OnDestroy - without this, Instance
+    // keeps pointing at a destroyed SASManager across a scene reload, and the next reader sees a dead
+    // MonoBehaviour rather than null. That reader is FlightInputHandlerThrottlePatch, a Harmony patch
+    // on the game's own input handler that runs every FixedUpdate regardless of scene state - the one
+    // place a stale Instance is least recoverable, which is why this one (unlike its two siblings)
+    // used to be missing entirely.
+    private void OnDestroy()
+    {
+        if (Instance == this)
+            Instance = null;
     }
 
     private void Update()
@@ -205,19 +270,36 @@ public class SASManager : MonoBehaviour
         if (vessel.Autopilot == null)
             return;
 
+        // Resolved once here and threaded through the rest of the tick (SetRotation,
+        // AdvanceCommandedRotation, UpdateHoverThrottle, ...) instead of each of those independently
+        // re-reading the live _vessel/_telemetry properties - see recommendation #1 in
+        // code_review_2026-07-17.md. _vessel is a live GetActiveSimVessel() lookup, not a cached
+        // field, so every extra access is a real (if cheap) chance of TOCTOU disagreement with what
+        // was already null-checked above.
+        var telemetry = vessel.SimulationObject.Telemetry;
+
         // Maneuver/Target modes silently held current attitude when their reference disappeared
         // (see the fallback branches in SetRotation/BuildTargetOrientationRotation) - the button
         // stayed lit as if still tracking with no way to tell. Auto-disengage to OFF instead, same
         // as a vessel switch, so the UI honestly reflects that the mode stopped doing anything.
-        if (AttitudeMode == AttitudeMode.Maneuver && !_telemetry.HasManeuver)
+        if (AttitudeMode == AttitudeMode.Maneuver && !telemetry.HasManeuver)
         {
             DisengageForLostReference("Maneuver node was removed");
             return;
         }
 
-        if (IsTargetMode(AttitudeMode) && !_telemetry.HasTargetObject)
+        if (IsTargetMode(AttitudeMode) && !telemetry.HasTargetObject)
         {
             DisengageForLostReference("Target was lost");
+            return;
+        }
+
+        // _engagedParentStar is resolved once at engage time (see SetMode) and cannot legitimately go
+        // null afterwards while a star mode stays engaged - this is a defensive backstop, not the
+        // primary guard (SetMode already refuses to engage a star mode it can't resolve a star for).
+        if (IsStarMode(AttitudeMode) && _engagedParentStar == null)
+        {
+            DisengageForLostReference("Parent star could not be determined");
             return;
         }
 
@@ -266,26 +348,105 @@ public class SASManager : MonoBehaviour
             // elapsed (UT rewind, see above) is clamped to 0 rather than clamped-and-fed-through - a
             // negative dt would make AdvanceCommandedRotation/RotateTowards's maxDegrees negative too.
             double dt = Math.Min(Math.Max(elapsed, 0), RefreshInterval_long);
-            SetRotation();
-            AdvanceCommandedRotation(dt);
+            SetRotation(vessel, telemetry);
+            AdvanceCommandedRotation(vessel, dt);
             vessel.Autopilot.SAS.LockRotation(_commandedRotation);
             _lastRefreshTime = _UT;
 
-            SetRefreshInterval();
+            SetRefreshInterval(vessel);
         }
 
         // Hover drives the throttle too, and needs a fresh command every frame (independent of the
         // adaptive rotation-refresh interval) so vertical-speed control stays smooth.
         if (AttitudeMode == AttitudeMode.Hover)
-            UpdateHoverThrottle();
+            UpdateHoverThrottle(vessel);
     }
 
-    public void SetRotation()
+    // Every "point the vessel at X" mode (all Orbit/Surface/Target/Star modes except the two TARGET
+    // PAR ones, which build their rotation from the target's own orientation frame via
+    // BuildTargetOrientationRotation rather than a simple direction - see SetRotation) shares one
+    // shape: compute a direction vector, hand it to BuildPointingRotation. This table is that shared
+    // step - each entry takes the same (telemetry, referenceFrame, north, upwards) SetRotation
+    // already has in hand and returns just the direction, reframed as needed. Mirrors
+    // FlightAxesVisualizer's _arrowSpecs/BuildArrowSpecs (Dictionary<..., Func<...>> built once,
+    // consumed by a single shared call site) - see code_review_2026-07-17.md #8.
+    //
+    // Static (not instance) like _arrowSpecs, for the same reason: SpecialStarPlus/Minus need
+    // _engagedParentStar, but going through the static Instance singleton (exactly how
+    // FlightAxesVisualizer's own entries reach SASManager.Instance.CommandedRotation) avoids
+    // capturing `this` in a per-instance table, so this can be a true allocate-once static like every
+    // other entry.
+    private static readonly Dictionary<AttitudeMode, Func<TelemetryComponent, ICoordinateSystem, Vector, Vector, Vector>> _directionSelectors =
+        BuildDirectionSelectors();
+
+    private static Dictionary<AttitudeMode, Func<TelemetryComponent, ICoordinateSystem, Vector, Vector, Vector>> BuildDirectionSelectors()
+    {
+        // Lambda params are always (tel, frame, north, up) in that order, matching the delegate's
+        // declared parameter order above - not every entry uses all four.
+        return new Dictionary<AttitudeMode, Func<TelemetryComponent, ICoordinateSystem, Vector, Vector, Vector>>
+        {
+            // The previous heading/pitch derivation (SignedAngle vs. north + Asin vs. upwards, then
+            // reconstructing via a chain of local AngleAxis rotations) was only exact when the target
+            // was near the horizon frame's "upwards" axis (its geometry degenerates into a gimbal
+            // lock there, which incidentally hid the bug for Radial+/-) - off by up to ~90 degrees in
+            // general (confirmed numerically). BuildPointingRotation uses LookRotation instead, which
+            // directly aligns local "up" (the vessel's nose axis) with the target with zero error for
+            // any target/upwards pair - see SetRotation's call site.
+            [AttitudeMode.OrbitPrograde] = (tel, frame, north, up) => Vector.Reframed(Vector.normalize(tel.OrbitalMovementVelocity), frame),
+            [AttitudeMode.OrbitRetrograde] = (tel, frame, north, up) => Vector.negate(Vector.Reframed(Vector.normalize(tel.OrbitalMovementVelocity), frame)),
+            [AttitudeMode.OrbitNormal] = (tel, frame, north, up) => Vector.Reframed(tel.OrbitMovementNormal, frame),
+            [AttitudeMode.OrbitAntiNormal] = (tel, frame, north, up) => Vector.negate(Vector.Reframed(tel.OrbitMovementNormal, frame)),
+            [AttitudeMode.OrbitRadialIn] = (tel, frame, north, up) => Vector.Reframed(tel.OrbitMovementRadialIn, frame),
+            [AttitudeMode.OrbitRadialOut] = (tel, frame, north, up) => Vector.Reframed(tel.OrbitMovementRadialOut, frame),
+
+            [AttitudeMode.SurfaceSurf] = (tel, frame, north, up) => north,
+            [AttitudeMode.SurfaceSvelPlus] = (tel, frame, north, up) => Vector.Reframed(Vector.normalize(tel.SurfaceMovementPrograde), frame),
+            [AttitudeMode.SurfaceSvelMinus] = (tel, frame, north, up) => Vector.negate(Vector.Reframed(Vector.normalize(tel.SurfaceMovementPrograde), frame)),
+            [AttitudeMode.SurfaceHvelPlus] = (tel, frame, north, up) => HorizontalVelocityDirection(tel, frame, up),
+            [AttitudeMode.SurfaceHvelMinus] = (tel, frame, north, up) => Vector.negate(HorizontalVelocityDirection(tel, frame, up)),
+            // Target is "upwards" itself here, so it can't also be used as LookRotation's up-hint
+            // (degenerate/parallel) - SetRotation's call site special-cases the hint to "north"
+            // for this one mode instead (see the comment there), same remap every other mode has.
+            [AttitudeMode.SurfaceUp] = (tel, frame, north, up) => up,
+
+            [AttitudeMode.TargetPlus] = (tel, frame, north, up) => Vector.Reframed(Vector.normalize(tel.TargetDirection), frame),
+            [AttitudeMode.TargetMinus] = (tel, frame, north, up) => Vector.negate(Vector.Reframed(Vector.normalize(tel.TargetDirection), frame)),
+            // Vessel's velocity relative to the target (MechJeb's RELATIVE_VELOCITY) - confirmed via
+            // decompile that TelemetryComponent computes TargetPrograde as exactly
+            // normalize(OrbitalMovementVelocity - targetOrbitalVelocity), i.e. relative velocity, not
+            // orbital prograde around the target.
+            [AttitudeMode.TargetRvelPlus] = (tel, frame, north, up) => Vector.Reframed(tel.TargetPrograde, frame),
+            [AttitudeMode.TargetRvelMinus] = (tel, frame, north, up) => Vector.negate(Vector.Reframed(tel.TargetPrograde, frame)),
+
+            // _engagedParentStar is resolved once at engage time (see SetMode) rather than walked
+            // from scratch every tick - the parent star can't change while a mode stays engaged, and
+            // Update()'s IsStarMode guard already disengages if it's ever null here.
+            [AttitudeMode.SpecialStarPlus] = (tel, frame, north, up) =>
+                Vector.Reframed(Vector.normalize(Position.Delta(Instance._engagedParentStar.Position, tel.RootPosition)), frame),
+            [AttitudeMode.SpecialStarMinus] = (tel, frame, north, up) =>
+                Vector.negate(Vector.Reframed(Vector.normalize(Position.Delta(Instance._engagedParentStar.Position, tel.RootPosition)), frame)),
+        };
+    }
+
+    // Horizontal component of surface velocity (vertical component projected out via the same
+    // dot/minus pattern Hover uses for its own tilt calc - Vector.dot/minus reframe their second
+    // argument into the first's coordinateSystem automatically, so mixing the unreframed telemetry
+    // vector with the already-reframed "upwards" here is safe). Shared by SurfaceHvelPlus/Minus,
+    // which previously duplicated this projection verbatim between the two cases (see
+    // code_review_2026-07-17.md #8) - Minus just negates the result.
+    private static Vector HorizontalVelocityDirection(TelemetryComponent telemetry, ICoordinateSystem referenceFrame, Vector upwards)
+    {
+        return Vector.Reframed(
+            Vector.normalize(Vector.minus(telemetry.SurfaceMovementVelocity, Vector.scale(upwards, Vector.dot(telemetry.SurfaceMovementVelocity, upwards)))),
+            referenceFrame);
+    }
+
+    private void SetRotation(VesselComponent vessel, TelemetryComponent telemetry)
     {
         // RefreshAutopilotTelemetry() is the game's own "autopilot consumers call this before
         // reading telemetry" entry point (as opposed to the display-only per-frame OnUpdate cycle).
         // Without it we could read a frame-stale horizon/orbit-movement/target/maneuver snapshot.
-        _telemetry.RefreshAutopilotTelemetry();
+        telemetry.RefreshAutopilotTelemetry();
 
         // All the telemetry direction vectors below come from different KSP2 ITransformFrame /
         // coordinateSystem instances (e.g. OrbitMovementNormal/RadialIn/RadialOut are literally the
@@ -303,9 +464,9 @@ public class SASManager : MonoBehaviour
         // computed lazily inside its own switch case instead (AttitudeMode is single-valued, so only
         // one case's vector(s) are ever needed per tick). This cuts per-tick Vector.Reframed calls
         // from ~18 down to 1 (2 for negated +/- pairs).
-        var north = _telemetry.HorizonNorth;
+        var north = telemetry.HorizonNorth;
         var referenceFrame = north.coordinateSystem;
-        var upwards = Vector.Reframed(Vector.normalize(Position.Delta(_telemetry.RootPosition, _telemetry.SOIPosition)), referenceFrame);
+        var upwards = Vector.Reframed(Vector.normalize(Position.Delta(telemetry.RootPosition, telemetry.SOIPosition)), referenceFrame);
 
         // Values actually commanded this tick - populated per-branch below (a disabled H/P/R control
         // doesn't just force its value to 0; see BuildPointingRotation/GetCurrentOffsetAngles).
@@ -318,164 +479,15 @@ public class SASManager : MonoBehaviour
 
         switch (AttitudeMode)
         {
-            // The previous heading/pitch derivation (SignedAngle vs. north + Asin vs. upwards, then
-            // reconstructing via a chain of local AngleAxis rotations) was only exact when the target
-            // was near the horizon frame's "upwards" axis (its geometry degenerates into a gimbal lock
-            // there, which incidentally hid the bug for Radial+/-) - off by up to ~90 degrees in
-            // general (confirmed numerically). BuildPointingRotation uses LookRotation instead, which
-            // directly aligns local "up" (the vessel's nose axis - see Euler(90,0,0)) with the target
-            // with zero error for any target/upwards pair.
-            case AttitudeMode.OrbitPrograde:
-            {
-                var orbitPrograde = Vector.Reframed(Vector.normalize(_telemetry.OrbitalMovementVelocity), referenceFrame);
-                _rotation = BuildPointingRotation(orbitPrograde, upwards, out effX, out effY, out effZ);
-                loggedTarget = orbitPrograde;
-                break;
-            }
-            case AttitudeMode.OrbitRetrograde:
-            {
-                var orbitRetrograde = Vector.negate(Vector.Reframed(Vector.normalize(_telemetry.OrbitalMovementVelocity), referenceFrame));
-                _rotation = BuildPointingRotation(orbitRetrograde, upwards, out effX, out effY, out effZ);
-                loggedTarget = orbitRetrograde;
-                break;
-            }
-            case AttitudeMode.OrbitNormal:
-            {
-                var orbitNormal = Vector.Reframed(_telemetry.OrbitMovementNormal, referenceFrame);
-                _rotation = BuildPointingRotation(orbitNormal, upwards, out effX, out effY, out effZ);
-                loggedTarget = orbitNormal;
-                break;
-            }
-            case AttitudeMode.OrbitAntiNormal:
-            {
-                var orbitAntiNormal = Vector.negate(Vector.Reframed(_telemetry.OrbitMovementNormal, referenceFrame));
-                _rotation = BuildPointingRotation(orbitAntiNormal, upwards, out effX, out effY, out effZ);
-                loggedTarget = orbitAntiNormal;
-                break;
-            }
-            case AttitudeMode.OrbitRadialIn:
-            {
-                var orbitRadialIn = Vector.Reframed(_telemetry.OrbitMovementRadialIn, referenceFrame);
-                _rotation = BuildPointingRotation(orbitRadialIn, upwards, out effX, out effY, out effZ);
-                loggedTarget = orbitRadialIn;
-                break;
-            }
-            case AttitudeMode.OrbitRadialOut:
-            {
-                var orbitRadialOut = Vector.Reframed(_telemetry.OrbitMovementRadialOut, referenceFrame);
-                _rotation = BuildPointingRotation(orbitRadialOut, upwards, out effX, out effY, out effZ);
-                loggedTarget = orbitRadialOut;
-                break;
-            }
-
-
-            case AttitudeMode.SurfaceSurf:
-                _rotation = BuildPointingRotation(north, upwards, out effX, out effY, out effZ);
-                loggedTarget = north;
-                break;
-            case AttitudeMode.SurfaceSvelPlus:
-            {
-                var surfacePrograde = Vector.Reframed(Vector.normalize(_telemetry.SurfaceMovementPrograde), referenceFrame);
-                _rotation = BuildPointingRotation(surfacePrograde, upwards, out effX, out effY, out effZ);
-                loggedTarget = surfacePrograde;
-                break;
-            }
-            case AttitudeMode.SurfaceSvelMinus:
-            {
-                var surfaceRetrograde = Vector.negate(Vector.Reframed(Vector.normalize(_telemetry.SurfaceMovementPrograde), referenceFrame));
-                _rotation = BuildPointingRotation(surfaceRetrograde, upwards, out effX, out effY, out effZ);
-                loggedTarget = surfaceRetrograde;
-                break;
-            }
-            case AttitudeMode.SurfaceHvelPlus:
-            {
-                // Horizontal component of surface velocity (vertical component projected out via the
-                // same dot/minus pattern Hover already uses for its tilt calc - Vector.dot/minus
-                // reframe their second argument into the first's coordinateSystem automatically, so
-                // mixing the unreframed telemetry vector with the already-reframed "upwards" here is
-                // safe).
-                var horizontalVelocity = Vector.Reframed(
-                    Vector.normalize(Vector.minus(_telemetry.SurfaceMovementVelocity, Vector.scale(upwards, Vector.dot(_telemetry.SurfaceMovementVelocity, upwards)))),
-                    referenceFrame);
-                _rotation = BuildPointingRotation(horizontalVelocity, upwards, out effX, out effY, out effZ);
-                loggedTarget = horizontalVelocity;
-                break;
-            }
-            case AttitudeMode.SurfaceHvelMinus:
-            {
-                // Same horizontal-velocity projection as SurfaceHvelPlus (see comment there), negated.
-                var antiHorizontalVelocity = Vector.negate(Vector.Reframed(
-                    Vector.normalize(Vector.minus(_telemetry.SurfaceMovementVelocity, Vector.scale(upwards, Vector.dot(_telemetry.SurfaceMovementVelocity, upwards)))),
-                    referenceFrame));
-                _rotation = BuildPointingRotation(antiHorizontalVelocity, upwards, out effX, out effY, out effZ);
-                loggedTarget = antiHorizontalVelocity;
-                break;
-            }
-            case AttitudeMode.TargetPlus:
-            {
-                var target = Vector.Reframed(Vector.normalize(_telemetry.TargetDirection), referenceFrame);
-                _rotation = BuildPointingRotation(target, upwards, out effX, out effY, out effZ);
-                loggedTarget = target;
-                break;
-            }
-            case AttitudeMode.TargetMinus:
-            {
-                var antiTarget = Vector.negate(Vector.Reframed(Vector.normalize(_telemetry.TargetDirection), referenceFrame));
-                _rotation = BuildPointingRotation(antiTarget, upwards, out effX, out effY, out effZ);
-                loggedTarget = antiTarget;
-                break;
-            }
-            case AttitudeMode.TargetRvelPlus:
-            {
-                // Vessel's velocity relative to the target (MechJeb's RELATIVE_VELOCITY) - confirmed
-                // via decompile that TelemetryComponent computes TargetPrograde as exactly
-                // normalize(OrbitalMovementVelocity - targetOrbitalVelocity), i.e. relative velocity,
-                // not orbital prograde around the target.
-                var targetRelativePrograde = Vector.Reframed(_telemetry.TargetPrograde, referenceFrame);
-                _rotation = BuildPointingRotation(targetRelativePrograde, upwards, out effX, out effY, out effZ);
-                loggedTarget = targetRelativePrograde;
-                break;
-            }
-            case AttitudeMode.TargetRvelMinus:
-            {
-                // Negation of the target-relative velocity described above TargetRvelPlus.
-                var targetRelativeRetrograde = Vector.negate(Vector.Reframed(_telemetry.TargetPrograde, referenceFrame));
-                _rotation = BuildPointingRotation(targetRelativeRetrograde, upwards, out effX, out effY, out effZ);
-                loggedTarget = targetRelativeRetrograde;
-                break;
-            }
+            // TARGET PAR builds its rotation from the target's own orientation frame
+            // (BuildTargetOrientationRotation), not a simple direction vector + BuildPointingRotation
+            // - so, unlike every mode below, it can't live in _directionSelectors. Stays explicit
+            // alongside the four genuinely special modes further down.
             case AttitudeMode.TargetParPlus:
-                _rotation = BuildTargetOrientationRotation(reversed: false, upwards, out effX, out effY, out effZ);
+                _rotation = BuildTargetOrientationRotation(vessel, telemetry, reversed: false, upwards, out effX, out effY, out effZ);
                 break;
             case AttitudeMode.TargetParMinus:
-                _rotation = BuildTargetOrientationRotation(reversed: true, upwards, out effX, out effY, out effZ);
-                break;
-            // Star pointing now runs through the same LookRotation-based BuildPointingRotation as
-            // every other mode (the earlier "doesn't work" note predates that rewrite - see the
-            // Offset math section of mod_specifics.md); wired to the UI but not yet re-verified
-            // in-game.
-            case AttitudeMode.SpecialStarPlus:
-            {
-                var sunBody = GetParentStar(_vessel);
-                var sun = Vector.Reframed(Vector.normalize(Position.Delta(sunBody.Position, _telemetry.RootPosition)), referenceFrame);
-                _rotation = BuildPointingRotation(sun, upwards, out effX, out effY, out effZ);
-                loggedTarget = sun;
-                break;
-            }
-            case AttitudeMode.SpecialStarMinus:
-            {
-                var sunBody = GetParentStar(_vessel);
-                var antiSun = Vector.negate(Vector.Reframed(Vector.normalize(Position.Delta(sunBody.Position, _telemetry.RootPosition)), referenceFrame));
-                _rotation = BuildPointingRotation(antiSun, upwards, out effX, out effY, out effZ);
-                loggedTarget = antiSun;
-                break;
-            }
-            case AttitudeMode.SurfaceUp:
-                // Target is "upwards" itself, so it can't also be used as LookRotation's up-hint
-                // (degenerate/parallel) - use "north" as the hint instead, same remap pattern as
-                // every other case.
-                _rotation = BuildPointingRotation(upwards, north, out effX, out effY, out effZ);
-                loggedTarget = upwards;
+                _rotation = BuildTargetOrientationRotation(vessel, telemetry, reversed: true, upwards, out effX, out effY, out effZ);
                 break;
 
             case AttitudeMode.Hover:
@@ -486,8 +498,8 @@ public class SASManager : MonoBehaviour
                 // above and hover_mode_fixes.md for why (a flat-angle cap and a separate escape-valve
                 // branch were both tried and found unsafe).
                 var up = upwards;
-                var actualVerticalSpeed = _vessel.VerticalSrfSpeed;
-                var surfaceVelocity = _telemetry.SurfaceMovementVelocity;
+                var actualVerticalSpeed = vessel.VerticalSrfSpeed;
+                var surfaceVelocity = telemetry.SurfaceMovementVelocity;
                 var horizontal = Vector.minus(surfaceVelocity, Vector.scale(up, Vector.dot(surfaceVelocity, up)));
                 var horizontalSpeed = horizontal.magnitude;
 
@@ -532,12 +544,12 @@ public class SASManager : MonoBehaviour
 
                 // Point the vessel's nose along the desired thrust vector directly via LookRotation
                 // (see the comment on AttitudeMode.OrbitPrograde). Heading/pitch aren't user-configurable
-                // in Hover, and neither is roll in practice - the hover-controls panel (see
-                // MainWindowController.UpdatePanelForMode) replaces the shared Heading/Pitch/Roll panel
-                // entirely and has no roll control of its own, so ZEnabled/Z here would just be
-                // whatever stale value was left over from the last non-Hover mode that did expose them.
-                // Roll is therefore always free (matches the vessel's own current roll every tick, same
-                // mechanism the shared panel's disabled-axis case uses) regardless of ZEnabled.
+                // in Hover - always straight along the thrust axis. Roll shares the same Z (target
+                // angle) as every other mode, but its OWN HoverRollEnabled flag rather than the shared
+                // ZEnabled (see HoverRollEnabled's field comment for why): locked to Z while enabled,
+                // free (tracks the vessel's own current roll every tick) while disabled. The
+                // hover-controls panel's own Roll toggle/field drives HoverRollEnabled/Z - see
+                // MainWindowController.UpdatePanelForMode.
                 //
                 // Up-hint is "north", NOT "upwards": "desired" is always within a few degrees of
                 // "upwards" in normal hover (near-zero drift means desired == up exactly - see just
@@ -553,7 +565,10 @@ public class SASManager : MonoBehaviour
                 var look = Rotation.LookRotation(desired, north);
                 effX = 0;
                 effY = 0;
-                effZ = GetCurrentOffsetAngles(look).roll;
+                // Computed unconditionally (not just while disabled) so CurrentRollOffset always
+                // reflects "what would Roll show right now if I hit CUR" - see its field comment.
+                CurrentRollOffset = GetCurrentOffsetAngles(vessel, look).roll;
+                effZ = HoverRollEnabled ? Z : CurrentRollOffset;
                 _rotation = look;
                 _rotation.localRotation = look.localRotation * QuaternionD.Euler(0, 0, effZ) * QuaternionD.Euler(90, 0, 0);
 
@@ -588,14 +603,14 @@ public class SASManager : MonoBehaviour
                 // the vessel holds the same direction in inertial space through orbital motion, SOI
                 // changes, and time warp. H/P/R trim still applies on top via the normal ApplyOffsets
                 // path (unlike KillRot, which has no trim panel at all).
-                _rotation = ApplyOffsets(_holdTarget, out effX, out effY, out effZ);
+                _rotation = ApplyOffsets(vessel, _holdTarget, out effX, out effY, out effZ);
                 break;
 
             case AttitudeMode.Maneuver:
-                if (_telemetry.HasManeuver)
+                if (telemetry.HasManeuver)
                 {
-                    var maneuver = Vector.Reframed(Vector.normalize(_telemetry.ManeuverDirection), referenceFrame);
-                    _rotation = BuildPointingRotation(maneuver, upwards, out effX, out effY, out effZ);
+                    var maneuver = Vector.Reframed(Vector.normalize(telemetry.ManeuverDirection), referenceFrame);
+                    _rotation = BuildPointingRotation(vessel, maneuver, upwards, out effX, out effY, out effZ);
                     loggedTarget = maneuver;
                 }
                 else
@@ -603,25 +618,45 @@ public class SASManager : MonoBehaviour
                     // No maneuver node planned - ManeuverDirection is a degenerate zero vector in that
                     // case, so there's nothing sensible to point at. Hold current attitude instead
                     // (same fallback as KillRot) rather than steering toward a meaningless direction.
-                    _rotation = _vessel.ControlTransform.Rotation;
+                    _rotation = vessel.ControlTransform.Rotation;
                     effX = 0;
                     effY = 0;
                     effZ = 0;
                 }
                 break;
 
-            default: // horizon
-                _rotation = BuildPointingRotation(north, upwards, out effX, out effY, out effZ);
+            // Every other mode (all Orbit/Surface/Target-non-PAR/Star modes) shares one shape: look
+            // up a direction from _directionSelectors, then BuildPointingRotation. AttitudeMode.None
+            // never reaches here (Update() returns early on it) and every other enum value has a
+            // registry entry above, so the "no entry" branch is an unreachable safety net matching
+            // this switch's original horizon fallback - not a live code path.
+            default:
+            {
+                if (_directionSelectors.TryGetValue(AttitudeMode, out var selectDirection))
+                {
+                    var dir = selectDirection(telemetry, referenceFrame, north, upwards);
+                    // SurfaceUp's direction IS "upwards" itself, so "upwards" can't also be used as
+                    // LookRotation's up-hint (degenerate/parallel) - "north" works as the hint for
+                    // every mode, including this one, so it's the one case that needs the swap.
+                    var hint = AttitudeMode == AttitudeMode.SurfaceUp ? north : upwards;
+                    _rotation = BuildPointingRotation(vessel, dir, hint, out effX, out effY, out effZ);
+                    loggedTarget = dir;
+                }
+                else
+                {
+                    _rotation = BuildPointingRotation(vessel, north, upwards, out effX, out effY, out effZ);
+                }
                 break;
+            }
         }
 
         // Gated behind VerboseLoggingEnabled (see the [Hover/attitude] comment above) - also skips the
         // GetAngleToRotation() call itself, not just the string formatting.
         if (Settings.VerboseLoggingEnabled.Value)
         {
-            var angleToTarget = GetAngleToRotation();
-            var (currentHeading, currentPitch, currentRoll) = ComputeHeadingPitchRoll(north, upwards, _vessel.ControlTransform.Rotation);
-            var angularVelocity = GetAngularVelocityDegPerSec();
+            var angleToTarget = GetAngleToRotation(vessel);
+            var (currentHeading, currentPitch, currentRoll) = ComputeHeadingPitchRoll(north, upwards, vessel.ControlTransform.Rotation);
+            var angularVelocity = GetAngularVelocityDegPerSec(vessel);
             // Logged BEFORE AdvanceCommandedRotation runs this tick (Update() calls SetRotation()
             // first) - this is the gap the upcoming slew step is about to close, so comparing it
             // across ticks shows whether the commanded setpoint is closing on the true target at
@@ -633,8 +668,8 @@ public class SASManager : MonoBehaviour
             var slewCapDeg = AttitudeSlewMaxRate * Math.Min(_UT - _lastRefreshTime, RefreshInterval_long);
             _LOGGER.LogDebug(
                 $"[SetRotation] mode={AttitudeMode} heading={currentHeading:F1}deg pitch={currentPitch:F1}deg roll={currentRoll:F1}deg " +
-                $"angularVelocity={angularVelocity:F1}deg/s altitude={_vessel.AltitudeFromSurface:F1}m verticalSpeed={_vessel.VerticalSrfSpeed:F2}m/s " +
-                $"offsets(H={effX:F1}[{XEnabled}],P={effY:F1}[{YEnabled}],R={effZ:F1}[{ZEnabled}]) angleToTarget={angleToTarget:F2}deg " +
+                $"angularVelocity={angularVelocity:F1}deg/s altitude={vessel.AltitudeFromSurface:F1}m verticalSpeed={vessel.VerticalSrfSpeed:F2}m/s " +
+                $"offsets(H={effX:F1}[{XEnabled}],P={effY:F1}[{YEnabled}],R={effZ:F1}[{(AttitudeMode == AttitudeMode.Hover ? HoverRollEnabled : ZEnabled)}]) angleToTarget={angleToTarget:F2}deg " +
                 $"commandedAngleToTarget={commandedAngleToTarget:F2}deg slewCapDeg={slewCapDeg:F2} " +
                 $"upwards={FormatVector(upwards)} north={FormatVector(north)}" +
                 (loggedTarget.HasValue ? $" target={FormatVector(loggedTarget.Value)}" : ""));
@@ -660,7 +695,7 @@ public class SASManager : MonoBehaviour
     // Rotation.Slerp reframes internally). QuaternionD.RotateTowards is the engine's own max-angle-
     // step primitive (Slerp clamped to at most maxDegreesDelta) - see the [SetRotation] log's
     // commandedAngleToTarget/slewCapDeg fields to verify this in a Player.log capture.
-    private void AdvanceCommandedRotation(double dt)
+    private void AdvanceCommandedRotation(VesselComponent vessel, double dt)
     {
         // Hover is exempt: its target ("desired" thrust tilt, see AttitudeMode.Hover) is recomputed
         // every tick as a direct function of the vessel's OWN current horizontal velocity - a tight
@@ -679,7 +714,7 @@ public class SASManager : MonoBehaviour
             return;
         }
 
-        var currentAttitude = Rotation.Reframed(_vessel.ControlTransform.Rotation, _rotation.coordinateSystem);
+        var currentAttitude = Rotation.Reframed(vessel.ControlTransform.Rotation, _rotation.coordinateSystem);
         double maxDegrees = AttitudeSlewMaxRate * Math.Max(0, dt);
         _commandedRotation = _rotation; // adopt the true target's coordinateSystem
         _commandedRotation.localRotation =
@@ -709,24 +744,22 @@ public class SASManager : MonoBehaviour
     // up (the nose - see the trailing Euler(90,0,0)) with `target` exactly, then the H/P/R offsets are
     // applied on top via ApplyOffsets. A disabled H/P/R control isn't just forced to 0 - see
     // GetCurrentOffsetAngles.
-    private Rotation BuildPointingRotation(Vector target, Vector upHint, out double appliedX, out double appliedY, out double appliedZ)
-        => ApplyOffsets(Rotation.LookRotation(target, upHint), out appliedX, out appliedY, out appliedZ);
+    private Rotation BuildPointingRotation(VesselComponent vessel, Vector target, Vector upHint, out double appliedX, out double appliedY, out double appliedZ)
+        => ApplyOffsets(vessel, Rotation.LookRotation(target, upHint), out appliedX, out appliedY, out appliedZ);
 
     // Shared H/P/R offset application, factored out of BuildPointingRotation so AttitudeMode.Hold (whose
     // "look" is a captured attitude snapshot, not something built fresh from a target/upHint pair every
     // tick) can reuse the exact same fixed-value-vs-free-track behavior as every other pointing mode.
-    private Rotation ApplyOffsets(Rotation look, out double appliedX, out double appliedY, out double appliedZ)
+    private Rotation ApplyOffsets(VesselComponent vessel, Rotation look, out double appliedX, out double appliedY, out double appliedZ)
     {
-        appliedX = XEnabled ? X : 0;
-        appliedY = YEnabled ? Y : 0;
-        appliedZ = ZEnabled ? Z : 0;
-        if (!XEnabled || !YEnabled || !ZEnabled)
-        {
-            var current = GetCurrentOffsetAngles(look);
-            if (!XEnabled) appliedX = current.heading;
-            if (!YEnabled) appliedY = current.pitch;
-            if (!ZEnabled) appliedZ = current.roll;
-        }
+        // Computed unconditionally (not just for a disabled axis) so CurrentRollOffset always
+        // reflects "what would Roll show right now if I hit CUR" - see its field comment.
+        var current = GetCurrentOffsetAngles(vessel, look);
+        CurrentRollOffset = current.roll;
+
+        appliedX = XEnabled ? X : current.heading;
+        appliedY = YEnabled ? Y : current.pitch;
+        appliedZ = ZEnabled ? Z : current.roll;
 
         var rotation = look;
         rotation.localRotation = AttitudeMath.ComposePointingRotation(look.localRotation, appliedX, appliedY, appliedZ);
@@ -748,18 +781,18 @@ public class SASManager : MonoBehaviour
     // Z-forward result onto that up axis. Using .forward/.back here (an earlier version of this method)
     // reads a different axis of the same orthonormal frame - 90 degrees off, which is exactly the
     // horizon-ish/off-to-the-side error observed in-game instead of pointing along the target's nose.
-    private Rotation BuildTargetOrientationRotation(bool reversed, Vector upHint, out double appliedX, out double appliedY, out double appliedZ)
+    private Rotation BuildTargetOrientationRotation(VesselComponent vessel, TelemetryComponent telemetry, bool reversed, Vector upHint, out double appliedX, out double appliedY, out double appliedZ)
     {
-        if (!_telemetry.HasTargetObject)
+        if (!telemetry.HasTargetObject)
         {
             appliedX = 0;
             appliedY = 0;
             appliedZ = 0;
-            return _vessel.ControlTransform.Rotation;
+            return vessel.ControlTransform.Rotation;
         }
 
-        var targetFacing = Vector.Reframed(reversed ? _telemetry.TargetFrame.down : _telemetry.TargetFrame.up, upHint.coordinateSystem);
-        return BuildPointingRotation(targetFacing, upHint, out appliedX, out appliedY, out appliedZ);
+        var targetFacing = Vector.Reframed(reversed ? telemetry.TargetFrame.down : telemetry.TargetFrame.up, upHint.coordinateSystem);
+        return BuildPointingRotation(vessel, targetFacing, upHint, out appliedX, out appliedY, out appliedZ);
     }
 
     // A disabled H/P/R control should let that axis drift freely instead of being pinned to a fixed
@@ -771,9 +804,9 @@ public class SASManager : MonoBehaviour
     // Solve `currentRotation = look * offset * Euler(90,0,0)` for `offset`, then decompose it with the
     // same convention used to build it (Euler(-pitch, heading, roll)) via Unity's own
     // Quaternion.eulerAngles, which is defined to invert Quaternion.Euler exactly.
-    private (double heading, double pitch, double roll) GetCurrentOffsetAngles(Rotation look)
+    private (double heading, double pitch, double roll) GetCurrentOffsetAngles(VesselComponent vessel, Rotation look)
     {
-        var currentRotation = Rotation.Reframed(_vessel.ControlTransform.Rotation, look.coordinateSystem);
+        var currentRotation = Rotation.Reframed(vessel.ControlTransform.Rotation, look.coordinateSystem);
         return AttitudeMath.GetCurrentOffsetAngles(look.localRotation, currentRotation.localRotation);
     }
 
@@ -802,6 +835,18 @@ public class SASManager : MonoBehaviour
         if (!TryGetVesselToEngage(mode.ToString(), out var vessel))
             return;
 
+        // Star modes need a resolvable parent star to point at - resolve (and cache) it now, before
+        // any state changes below, and refuse to engage rather than latching a mode that would
+        // immediately auto-disengage next tick (see the IsStarMode guard in Update()). Confirmed via
+        // decompile that CelestialBodyComponent.referenceBody returns null at the root of the body
+        // tree, which is the actual (rare) failure case here - not an exception, so no try/catch.
+        CelestialBodyComponent parentStar = null;
+        if (IsStarMode(mode) && !TryGetParentStar(vessel, out parentStar))
+        {
+            _LOGGER.LogWarning($"Cannot engage {mode}: could not determine the vessel's parent star.");
+            return;
+        }
+
         // Snapshot heading/pitch/roll/hover (altitude, vertical speed) state at the exact moment any
         // mode engages - always-on (LogInfo, not gated behind VerboseLoggingEnabled) so there's a
         // ground-truth starting point for every mode switch even with verbose per-tick logging off.
@@ -814,10 +859,11 @@ public class SASManager : MonoBehaviour
 
         _LOGGER.LogInfo(
             $"SAS mode -> {mode} (was {AttitudeMode}) heading={heading:F1}deg pitch={pitch:F1}deg roll={roll:F1}deg " +
-            $"angularVelocity={GetAngularVelocityDegPerSec():F1}deg/s " +
+            $"angularVelocity={GetAngularVelocityDegPerSec(vessel):F1}deg/s " +
             $"altitude={vessel.AltitudeFromSurface:F1}m verticalSpeed={vessel.VerticalSrfSpeed:F2}m/s");
         AttitudeMode = mode;
         _engagedVessel = vessel;
+        _engagedParentStar = parentStar;
         // Seed the slew setpoint from the vessel's real current attitude so the very first
         // AdvanceCommandedRotation step starts from reality, not a stale rotation left over from a
         // previous mode/vessel - see _commandedRotation's field comment.
@@ -897,6 +943,7 @@ public class SASManager : MonoBehaviour
         _lastVerticalSpeedForDerivative = 0;
         _filteredThrustDrivenAccel = 0;
         HoverThrottle = 0;
+        _engagedParentStar = null;
     }
 
     public void SetSASKillrot()
@@ -1004,13 +1051,13 @@ public class SASManager : MonoBehaviour
     /// kill horizontal velocity) is divided out so the vertical thrust component stays on target
     /// while the vessel leans.
     /// </summary>
-    private void UpdateHoverThrottle()
+    private void UpdateHoverThrottle(VesselComponent vessel)
     {
         double dt = Time.deltaTime;
         if (dt <= 0.0)
             return;
 
-        double actualVerticalSpeed = _vessel.VerticalSrfSpeed;
+        double actualVerticalSpeed = vessel.VerticalSrfSpeed;
 
         // Use gravityForPos, not gravityTrue - the latter is a dead field, never assigned anywhere in
         // the decompiled type (see [[verify-decompiled-fields]] in memory).
@@ -1023,7 +1070,7 @@ public class SASManager : MonoBehaviour
                 FilteredThrustDrivenAccel = _filteredThrustDrivenAccel,
                 Throttle = HoverThrottle,
             },
-            dt, actualVerticalSpeed, HoverTargetVerticalSpeed, _vessel.gravityForPos.magnitude, _hoverCosTilt,
+            dt, actualVerticalSpeed, HoverTargetVerticalSpeed, vessel.gravityForPos.magnitude, _hoverCosTilt,
             HoverThrottleKp, HoverThrottleKi, HoverThrottleKd, HoverThrottleAccelFilterTime, HoverThrottleMaxRate);
 
         _throttleIntegral = result.State.ThrottleIntegral;
@@ -1041,7 +1088,7 @@ public class SASManager : MonoBehaviour
         {
             _lastHoverLogTime = _UT;
             _LOGGER.LogDebug(
-                $"[Hover/throttle] altitude={_vessel.AltitudeFromSurface:F1}m targetVSpeed={HoverTargetVerticalSpeed:F2}m/s " +
+                $"[Hover/throttle] altitude={vessel.AltitudeFromSurface:F1}m targetVSpeed={HoverTargetVerticalSpeed:F2}m/s " +
                 $"actualVSpeed={actualVerticalSpeed:F2}m/s vSpeedErr={result.VerticalSpeedError:F2}m/s vAccel={result.VerticalAccel:F2}m/s^2 " +
                 $"thrustDrivenAccel={result.ThrustDrivenAccel:F2}m/s^2 filteredThrustDrivenAccel={_filteredThrustDrivenAccel:F2}m/s^2 throttleIntegral={_throttleIntegral:F3} " +
                 $"throttlePreClamp={result.ThrottlePreClamp:F3}[{(result.ThrottlePreClamp <= 0.0 || result.ThrottlePreClamp >= 1.0 ? "SATURATED" : "ok")}] " +
@@ -1053,35 +1100,39 @@ public class SASManager : MonoBehaviour
     private static double Clamp(double value, double min, double max)
         => value < min ? min : (value > max ? max : value);
 
-    private CelestialBodyComponent GetParentStar(VesselComponent vessel)
+    // Walks up the reference-body chain to the root star. Confirmed via decompiling
+    // CelestialBodyComponent that referenceBody is null at the root of the body tree - so a vessel
+    // whose mainBody chain never reaches a star (should not normally happen, but nothing here
+    // guarantees it) ends the walk on body == null rather than an exception. Returns false in that
+    // case instead of a null CelestialBodyComponent the caller might dereference unchecked.
+    private static bool TryGetParentStar(VesselComponent vessel, out CelestialBodyComponent star)
     {
         var body = vessel.mainBody;
-
-        try
+        while (body != null && !body.IsStar)
         {
-            while (!body.IsStar)
-            {
-                body = body.referenceBody;
-            }
-        }
-        catch (Exception ex)
-        {
-            _LOGGER.LogError($"Unable to fetch parent star for vessel {vessel.Name}. How is this possible?! Exception: {ex.Message}");
+            body = body.referenceBody;
         }
 
-        return body;
+        star = body;
+        return body != null;
     }
 
     // Public: also read by MainWindowController for the status readout's generic angle-to-target line
     // (every pointing mode - ORB/SURF/TGT/SPEC/Node/TGT PAR - shares this; KillRot/Hover don't point
     // anywhere, so they use their own readouts below instead).
-    public double GetAngleToRotation()
+    public double GetAngleToRotation() => GetAngleToRotation(_vessel);
+
+    // Internal overload for callers (Update()'s own tick) that have already resolved the vessel once
+    // this tick - avoids an extra independent _vessel re-resolution on top of the one Update() already
+    // did. The public zero-arg overload above is for external callers (MainWindowController) that don't
+    // have a vessel of their own to hand in.
+    private double GetAngleToRotation(VesselComponent vessel)
     {
         // Guards the same one-frame window as GetAngularVelocityDegPerSec below: the UI (MainWindowController)
         // reads this whenever AttitudeMode != None, and Unity doesn't guarantee this MonoBehaviour's own
         // Update (which disengages AttitudeMode the moment _vessel no longer matches _engagedVessel) runs
         // before the UI's Update in the same frame.
-        if (_vessel == null)
+        if (vessel == null)
             return 0;
 
         // _rotation is only ever assigned inside SetRotation(), which Update() doesn't call until its
@@ -1095,7 +1146,7 @@ public class SASManager : MonoBehaviour
         // generally NOT the same frame as _vessel.transform.coordinateSystem - comparing their raw
         // vectors directly (as the previous code did) is the same coordinate-mixing bug fixed elsewhere
         // in this file. Reframe the vessel's current "nose" direction into _rotation's frame first.
-        var currentAttitude = Vector.Reframed(_vessel.MOI.coordinateSystem.up, _rotation.coordinateSystem);
+        var currentAttitude = Vector.Reframed(vessel.MOI.coordinateSystem.up, _rotation.coordinateSystem);
         var currentRotation = _rotation.localRotation * Vector3d.up;
         return Vector3d.Angle(currentAttitude.vector, currentRotation);
     }
@@ -1105,11 +1156,13 @@ public class SASManager : MonoBehaviour
     // still tumbling instead, trending to 0 as it settles. KSP2's physics angular velocity is
     // radians/second (Unity Rigidbody convention); converted to degrees/second to match every other
     // angle in this file.
-    public double GetAngularVelocityDegPerSec()
+    public double GetAngularVelocityDegPerSec() => GetAngularVelocityDegPerSec(_vessel);
+
+    private double GetAngularVelocityDegPerSec(VesselComponent vessel)
     {
-        if (_vessel == null)
+        if (vessel == null)
             return 0;
-        return _vessel.AngularVelocityMassAvg.relativeAngularVelocity.magnitude * (180.0 / Math.PI);
+        return vessel.AngularVelocityMassAvg.relativeAngularVelocity.magnitude * (180.0 / Math.PI);
     }
 
     // Actual current vertical/horizontal surface speed for the Hover status readout - the same
@@ -1118,9 +1171,9 @@ public class SASManager : MonoBehaviour
     public double GetHoverVerticalSpeed() => _vessel?.VerticalSrfSpeed ?? 0;
     public double GetHoverHorizontalSpeed() => _vessel?.HorizontalSrfSpeed ?? 0;
 
-    private void SetRefreshInterval()
+    private void SetRefreshInterval(VesselComponent vessel)
     {
-        var angleToRotation = GetAngleToRotation();
+        var angleToRotation = GetAngleToRotation(vessel);
         if (angleToRotation > AngleToRotation_large)
             RefreshInterval = RefreshInterval_short;
         else if (angleToRotation > AngleToRotation_small)

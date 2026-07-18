@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using ReduxLib.Configuration;
 using SASExtended.Models;
+using UnityEngine;
 
 namespace SASExtended.Utilities
 {
@@ -46,7 +47,7 @@ namespace SASExtended.Utilities
             AttitudeMode.TargetRvelPlus, AttitudeMode.TargetRvelMinus,
             AttitudeMode.TargetParPlus, AttitudeMode.TargetParMinus,
             AttitudeMode.SpecialStarPlus, AttitudeMode.SpecialStarMinus,
-            AttitudeMode.Hold
+            AttitudeMode.Hold, AttitudeMode.Hover
         };
 
         // Remembered Hover vertical velocity - session-only, see the comment on AttitudeOffsets above.
@@ -59,6 +60,12 @@ namespace SASExtended.Utilities
         public static ConfigValue<float> SurfaceSurfDefaultHeading;
         public static ConfigValue<float> SurfaceSurfDefaultPitch;
         public static ConfigValue<float> SurfaceSurfDefaultRoll;
+
+        // "Landing prediction" section
+        public static ConfigValue<bool> ShowLandingPrediction;
+        public static ConfigValue<float> LandingPredictionRefreshInterval;
+        public static ConfigValue<Color> LandingPredictionLineColor;
+        public static ConfigValue<Color> LandingPredictionMarkerColor;
 
         // "Diagnostics" section
         public static ConfigValue<bool> VerboseLoggingEnabled;
@@ -143,6 +150,40 @@ namespace SASExtended.Utilities
 
             // HOVER (session-only - see the field comment above)
             HoverVerticalVelocity = new SessionValue<float>(0f);
+
+            // LANDING PREDICTION
+            ShowLandingPrediction = new(Plugin.SWConfiguration.Bind(
+                "Landing prediction",
+                "Show landing predictions",
+                false,
+                "Show a predicted coast trajectory and ground impact marker in flight. Pure ballistic " +
+                "coast, no atmospheric drag/parachute model - on a body with an atmosphere the " +
+                "prediction ignores that entirely, so treat it as a rough indicator, not exact through " +
+                "a real reentry."
+                ));
+
+            LandingPredictionRefreshInterval = new(Plugin.SWConfiguration.Bind(
+                "Landing prediction",
+                "Refresh interval (sec)",
+                0.1f,
+                "How often (in seconds) the landing prediction trajectory/impact point is recomputed. " +
+                "Lower values track a changing trajectory more closely at the cost of more frequent searches.",
+                new RangeConstraint<float>(0.01f, 2f)
+                ));
+
+            LandingPredictionLineColor = new(Plugin.SWConfiguration.Bind(
+                "Landing prediction",
+                "Trajectory line color",
+                Color.red,
+                "Color of the predicted trajectory line."
+                ));
+
+            LandingPredictionMarkerColor = new(Plugin.SWConfiguration.Bind(
+                "Landing prediction",
+                "Impact marker color",
+                new Color(1.0f, 1.0f, 0.0f),
+                "Color of the predicted impact marker."
+                ));
 
             // DIAGNOSTICS
             VerboseLoggingEnabled = new(Plugin.SWConfiguration.Bind(
