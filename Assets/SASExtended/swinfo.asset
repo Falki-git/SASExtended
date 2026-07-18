@@ -18,7 +18,7 @@ MonoBehaviour:
   description: 'Extends the functionalities of stock SAS.
 
     Enables additional
-    modes, attitudes tweaks and hover.'
+    modes, attitudes tweaks, hover and landing prediction.'
   version: 1.1.0
   versionCheck: https://raw.githubusercontent.com/Falki-git/SASExtended/refs/heads/main/Assets/SASExtended/swinfo.json
   minKsp2Version: 0.2.8.5
