@@ -42,8 +42,6 @@
     "Newtonsoft.Json.UnityConverters.dll",
     "PriorityQueue.dll",
     "ReduxLib.dll",
-    "ShapesRuntime.dll",
-    "ShapesSamples.dll",
     "SpaceGraphicsToolkit.dll",
     "SpaceGraphicsToolkit.Galaxy.dll",
     "SpaceGraphicsToolkit.Nebula.dll",
