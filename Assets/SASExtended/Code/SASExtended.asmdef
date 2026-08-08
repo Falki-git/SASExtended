@@ -31,11 +31,6 @@
     "Febucci.TextAnimator.Demo.Runtime.dll",
     "Febucci.TextAnimator.Runtime.dll",
     "Febucci.TextAnimator.TMP.Runtime.dll",
-    "glTFast.dll",
-    "glTFast.Documentation.Examples.dll",
-    "glTFast.dots.dll",
-    "glTFast.Export.dll",
-    "glTFast.Newtonsoft.dll",
     "HoudiniEngineUnity.dll",
     "IGTools.dll",
     "Intercept.Metrics.dll",
@@ -65,7 +60,6 @@
     "System.EnterpriseServices.dll",
     "System.IO.Compression.dll",
     "System.IO.Compression.FileSystem.dll",
-    "System.Memory.dll",
     "System.Reflection.Emit.dll",
     "System.Reflection.Emit.ILGeneration.dll",
     "System.Security.dll",
@@ -92,12 +86,13 @@
     "UnityEngine.SpatialTracking.dll",
     "UnityEngine.UnityTestProtocolModule.dll",
     "UnityEngine.XR.LegacyInputHelpers.dll",
-    "VInspector.dll",
     "Newtonsoft.Json.dll"
   ],
   "references": [
     "Unity.ResourceManager",
-    "Unity.Addressables"
+    "Unity.Addressables",
+    "Unity.Entities",
+    "Unity.Collections"
   ],
   "autoReferenced": true,
   "noEngineReferences": false
