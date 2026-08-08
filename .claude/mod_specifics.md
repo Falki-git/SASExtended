@@ -459,23 +459,22 @@ offset memory, window position/open-state persistence, the status readout, SAS m
 and auto-disengage on vessel change / lost node-target / external stock-SAS toggle are all
 implemented and working.
 
-**Flight Axes visuals — implemented, pending in-game verification.** The full set — split control axes
+**Flight Axes visuals — implemented and in-game tested, working.** The full set — split control axes
 (fwd/up/right), commanded/target attitude arrows, orbital prograde/normal/radial-in, surface &
 horizontal velocity arrows, and the CoM marker (`FlightAxesVisualizer`) — plus the
-settings-panel/settings-button wiring is written but not yet built/run. Confirm on the next build:
-(1) the two stock debug prefabs actually load from a mod context (internal debug assets — watch for
-`logMissingKey` warnings in `Player.log`; CoM needs no prefab so it works regardless); (2) the attitude
-arrows point along the nose as derived (engage e.g. Prograde + a Heading offset: the violet target arrow
-jumps to the goal while the orange commanded arrow slews onto the white up/control arrow); (3) the direction
-arrows point the right way (prograde/normal/radial-in/surface-velocity against the navball). The
-settings-panel UXML (`#settings-container`, `#settings-button`, and the eleven `show-*` toggles in
-`FlightAxesVisualizer.ToggleIds`) is authored by the user, not shipped in this codebase yet.
+settings-panel/settings-button wiring. All of it is drawn by this mod's own
+[`Code/Rendering/`](../Assets/SASExtended/Code/Rendering) primitives; the stock `DebugShapes*`
+components and their two debug prefabs are gone, so nothing here can be blocked by an addressable
+that fails to resolve. Verified on KSP2 0.2.9.0 / Unity 6.5: arrow directions against the navball,
+the control-axes basis (see the negation note in `UpdateControlAxes` — forward and right ARE
+negated, confirmed in flight), and always-on-top rendering through the vessel hull.
 
-**Landing prediction visuals — implemented and in-game tested, working**, on branch
-`feature/landing-prediction-visuals`. Trajectory line + impact marker render correctly for airless
-bodies, including the near-zero-horizontal-velocity case and the near-radial (falling almost
-straight down) regime that broke several earlier approaches — see `landing_prediction_fixes.md` for
-the 10-round debugging log before touching `LandingPredictionManager.cs` again.
+**Landing prediction visuals — implemented and in-game tested, working.** Trajectory line + impact
+marker render correctly for airless bodies, including the near-zero-horizontal-velocity case and the
+near-radial (falling almost straight down) regime that broke several earlier approaches — see
+`landing_prediction_fixes.md` for the 10-round debugging log before touching
+`LandingPredictionManager.cs` again. The trajectory line is a `LineRenderer`; the impact reticle is
+three `PolylinePrimitive`s (it was Shapes immediate-mode until the 0.2.9.0 port).
 
 Build-constraint reminder: the Unity asmdef compiles at **C# 9.0** (Unity 6000.5.0f1) — no
 file-scoped namespaces, no `with` on structs. See [[langversion-csharp9]].
