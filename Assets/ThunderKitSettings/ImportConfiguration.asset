@@ -1,6 +1,6 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
---- !u!114 &-7579893916083877168
+--- !u!114 &-6466152018980004767
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -9,11 +9,11 @@ MonoBehaviour:
   m_GameObject: {fileID: 0}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: a4e66fd1b2f0a6b4e951af502eba5a2b, type: 3}
-  m_Name: Create Game Package
+  m_Script: {fileID: 11500000, guid: 208b77589c09e314aa3dbfae9117393a, type: 3}
+  m_Name: Disable Assembly Updater
   m_EditorClassIdentifier: 
   enabled: 1
---- !u!114 &-7307806895926896658
+--- !u!114 &-5761416977739413648
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -22,11 +22,50 @@ MonoBehaviour:
   m_GameObject: {fileID: 0}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 8dcb1359c6da7c049b1063e3561a1ecf, type: 3}
-  m_Name: Check Unity Version
+  m_Script: {fileID: 11500000, guid: b7f32e9d1a0c584763d21af8c5b9e049, type: 3}
+  m_Name: Ensure Assembly Definitions
+  m_EditorClassIdentifier: ThunderKit.Core::ThunderKit.Core.Config.Common.EnsureAssemblyDefinitions
+  enabled: 1
+--- !u!114 &-4959971984552949242
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a87a9f1780c348d4080afaf9971d3a7e, type: 3}
+  m_Name: Import Assemblies
   m_EditorClassIdentifier: 
   enabled: 1
---- !u!114 &-3127717886450496777
+--- !u!114 &-4648925645063199658
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0cf0398e0ff60b641a1c9a78c649cbae, type: 3}
+  m_Name: Beep
+  m_EditorClassIdentifier: 
+  enabled: 1
+--- !u!114 &-2171173454706281465
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8840720793112784295b7c9b06af7493, type: 3}
+  m_Name: Get Bitness
+  m_EditorClassIdentifier: 
+  enabled: 1
+--- !u!114 &-1677956116862342073
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -40,6 +79,19 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   enabled: 1
   IncludedSettings: 0
+--- !u!114 &-79920191352880582
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8dcb1359c6da7c049b1063e3561a1ecf, type: 3}
+  m_Name: Check Unity Version
+  m_EditorClassIdentifier: 
+  enabled: 1
 --- !u!114 &11400000
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -53,32 +105,19 @@ MonoBehaviour:
   m_Name: ImportConfiguration
   m_EditorClassIdentifier: ThunderKit.Core::ThunderKit.Core.Data.ImportConfiguration
   ConfigurationExecutors:
-  - {fileID: -7307806895926896658}
-  - {fileID: 1224350993822018631}
-  - {fileID: 2947307065829795053}
-  - {fileID: 2375710201134464330}
-  - {fileID: -3127717886450496777}
-  - {fileID: -7579893916083877168}
-  - {fileID: 331274635906231920}
-  - {fileID: 6368825964247163056}
-  - {fileID: 1850559437040258888}
-  - {fileID: 164653824045815350}
+  - {fileID: -79920191352880582}
+  - {fileID: -6466152018980004767}
+  - {fileID: -5761416977739413648}
+  - {fileID: -4959971984552949242}
+  - {fileID: -1677956116862342073}
+  - {fileID: 5431655247165949078}
+  - {fileID: 4524745322241696956}
+  - {fileID: -2171173454706281465}
+  - {fileID: -4648925645063199658}
+  - {fileID: 5028018055137642995}
   configurationIndex: 10
   totalImportExtensionCount: 10
---- !u!114 &164653824045815350
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 0}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 52610fcf3c7c01e43ad95185897e1eb5, type: 3}
-  m_Name: Prompt Restart
-  m_EditorClassIdentifier: 
-  enabled: 1
---- !u!114 &331274635906231920
+--- !u!114 &4524745322241696956
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -91,7 +130,7 @@ MonoBehaviour:
   m_Name: Import Addressable Catalog
   m_EditorClassIdentifier: 
   enabled: 1
---- !u!114 &1224350993822018631
+--- !u!114 &5028018055137642995
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -100,11 +139,11 @@ MonoBehaviour:
   m_GameObject: {fileID: 0}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 208b77589c09e314aa3dbfae9117393a, type: 3}
-  m_Name: Disable Assembly Updater
+  m_Script: {fileID: 11500000, guid: 52610fcf3c7c01e43ad95185897e1eb5, type: 3}
+  m_Name: Prompt Restart
   m_EditorClassIdentifier: 
-  enabled: 1
---- !u!114 &1850559437040258888
+  enabled: 0
+--- !u!114 &5431655247165949078
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -113,46 +152,7 @@ MonoBehaviour:
   m_GameObject: {fileID: 0}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 0cf0398e0ff60b641a1c9a78c649cbae, type: 3}
-  m_Name: Beep
-  m_EditorClassIdentifier: 
-  enabled: 1
---- !u!114 &2375710201134464330
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 0}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: a87a9f1780c348d4080afaf9971d3a7e, type: 3}
-  m_Name: Import Assemblies
-  m_EditorClassIdentifier: 
-  enabled: 1
---- !u!114 &2947307065829795053
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 0}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: b7f32e9d1a0c584763d21af8c5b9e049, type: 3}
-  m_Name: Ensure Assembly Definitions
-  m_EditorClassIdentifier: ThunderKit.Core::ThunderKit.Core.Config.Common.EnsureAssemblyDefinitions
-  enabled: 1
---- !u!114 &6368825964247163056
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 0}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 8840720793112784295b7c9b06af7493, type: 3}
-  m_Name: Get Bitness
+  m_Script: {fileID: 11500000, guid: a4e66fd1b2f0a6b4e951af502eba5a2b, type: 3}
+  m_Name: Create Game Package
   m_EditorClassIdentifier: 
   enabled: 1

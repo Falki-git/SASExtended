@@ -69,13 +69,17 @@ public class SASManager : MonoBehaviour
     // _telemetry independently re-resolve _vessel for the actual read. Two independent resolutions of
     // a live lookup can (in principle) disagree - the guard would then be checking a different vessel
     // than the one _telemetry ends up NREing on.
+    // Chain through SimulationObject/Telemetry rather than assuming a non-null vessel has live ones:
+    // a vessel that has just been unloaded or destroyed keeps its VesselComponent for a beat while its
+    // SimulationObject is already gone. Both getters run every frame (UpdateNodeTargetAvailability), so
+    // an unguarded hop here is an exception per frame, not a one-off.
     public bool HasManeuverNode
     {
-        get { var vessel = _vessel; return vessel != null && vessel.SimulationObject.Telemetry.HasManeuver; }
+        get { var telemetry = _vessel?.SimulationObject?.Telemetry; return telemetry != null && telemetry.HasManeuver; }
     }
     public bool HasTarget
     {
-        get { var vessel = _vessel; return vessel != null && vessel.SimulationObject.Telemetry.HasTargetObject; }
+        get { var telemetry = _vessel?.SimulationObject?.Telemetry; return telemetry != null && telemetry.HasTargetObject; }
     }
 
     private static bool IsTargetMode(AttitudeMode mode) =>

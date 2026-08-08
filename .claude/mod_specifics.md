@@ -21,8 +21,8 @@ the player far finer control over vessel orientation. On top of the stock hold d
 Design north star is feature parity with KSP1 MechJeb2's "Smart A.S.S." module — see
 [[external-sources]] for where that reference source and the legacy pre-Redux prototype live.
 
-- **swinfo:** id `SASExtended`, name "SAS Extended", author **Falki**, v0.1.0,
-  `minKsp2Version` 0.2.8.3, depends on `SpaceWarp2 >= 2.0.0`.
+- **swinfo:** id `SASExtended`, name "SAS Extended", author **Falki**, v1.1.0,
+  `minKsp2Version` 0.2.9.0, depends on `SpaceWarp2 >= 2.0.0`.
 - **Mod folder:** `Assets/SASExtended/` (see CLAUDE.md → Repository layout for the per-mod
   template structure).
 - **Entry point:** `Assets/SASExtended/Code/SASExtendedPlugin.cs` — a `Redux.ExtraModTypes.KerbalMod`.
@@ -97,6 +97,60 @@ and hand it to Redux SAS.
 To re-derive this diff against a newer Redux build: `ilspycmd -t KSP.Sim.VesselSAS "<dll>"` on
 vanilla vs. Redux `Assembly-CSharp.dll`, then diff (decompiled copies are scratchpad-only, not
 checked in).
+
+#### What game build 0.2.9.0 (26w32b) changed in `VesselSAS`
+
+`LockRotation(Rotation)` / `LockRotation(QuaternionD)` / `LockedRotation` are **unchanged**, so our
+control path is intact. What moved underneath it:
+
+1. **Persistent target orientation** — a new `SetPersistentTargetOrientation(...)` /
+   `ClearPersistentTargetOrientation()` pair backs the stock direction-hold buttons. While a
+   persistent target is set, `ControlUpdate` calls `RefreshPersistentTargetOrientation()` **every
+   tick**, which re-writes `LockedRotation` from the game's own target — i.e. it would silently
+   overwrite whatever we wrote that tick — and `SetPersistentTargetOrientation` also forces
+   `lockedMode = false`, which switches SAS off the locked-rotation path entirely.
+   **Why we're safe:** `VesselAutopilot.Activate`/`SetMode` both call
+   `SAS.ClearPersistentTargetOrientation()` and set `lockedMode = (mode == StabilityAssist)`, and we
+   engage via `Autopilot.SetActive(true)` → `Activate(StabilityAssist)`. `SASManager`'s existing
+   per-tick guard (auto-disengage when `Autopilot.Enabled` is false **or** `AutopilotMode !=
+   StabilityAssist`) also means a stock direction button can never leave a persistent target fighting
+   us. **Keep that guard** — it is now load-bearing for more than just the external-toggle case.
+2. **`COAST_SCALAR` 2f → 8f**, plus per-axis damping cooldown timers (`pitch/roll/yawDampingCooldownTimer`
+   replacing the single `dampingCooldownTimer`) and a new free-roll damping law
+   (`FREE_ROLL_DAMPING_*`, `PERSISTENT_ROLL_KP/KD`). Net effect: **SAS response is retuned**, so
+   settle time / overshoot on a reorientation will feel different from 0.2.8.5 even with identical
+   commanded rotations. If the attitude slew limiter (`AttitudeSlewMaxRate`) needs retuning, that is
+   where to look first — the mod's own math did not change.
+3. **MOI validation** (`MIN_VALID_MOI`, `IsInvalidMoi`, `_loggedInvalidMoiWarning`) and new public
+   trace fields (`attitudeOmega{X,Y,Z}`, `rotation{X,Y,Z,W}`) in the CSV trace header.
+
+Other 0.2.9.0 API shifts that touch this mod (all verified against the mod's call sites):
+
+- **`KSP.Sim.impl.UniverseModel` is now a Unity ECS `SystemBase`** (was a plain class implementing
+  `IFixedUpdate`/`IPriorityOverride`). Any assembly that so much as holds a `UniverseModel` reference
+  must now reference **`Unity.Entities`** — that is why it is in `SASExtended.asmdef`'s `references`.
+- **`FlightInputHandler` no longer implements `IFixedUpdate`/`IPriorityOverride`** (it is ECS-driven
+  now), but `OnFixedUpdate` → `UpdateFlightControlState(float, VesselComponent)` is unchanged, so
+  `Patches/FlightInputHandlerThrottlePatch` still hooks the right method.
+- **`TelemetryComponent` and `PatchedConicsOrbit` are now ECS-backed** (`TelemetryData` /
+  `PatchedConicsOrbitData` + an `Entity` handle) — every direction/orbit member the mod reads still
+  exists with the same name and type, but they are now computed properties over entity data rather
+  than plain auto-properties, so treat repeated reads as non-free and keep using the existing
+  "refresh once per tick, then read" pattern.
+- **UitkForKsp2 windows moved off `UIDocument` onto Unity's `PanelRenderer`.**
+  `Window.Create(...)` now returns a **`PanelRenderer`** and no `UIDocument` is ever added to the
+  window GameObject. Get the root with the `UitkForKsp2.API.Extensions` helpers —
+  `renderer.GetWindowRoot()` (already unwraps the `TemplateContainer`, so **don't** index `[0]` into
+  it the way the old `_window.rootVisualElement[0]` did), or `renderer.OnWindowRoot(cb)` /
+  `GetPanelRoot()` / `OnPanelRoot(cb)`; `Show()`/`Hide()`/`ToggleDisplay()` are also available and do
+  focus-blur + text-input-lock release that a raw `style.display` flip does not.
+  `PanelRenderer.rootVisualElement` itself is `internal` — don't reach for it.
+  **This one compiled clean and only failed in-game**, because `SceneController.Initialize` held the
+  result in a `var`: the return type changed underneath it, `GetComponent<UIDocument>()` returned
+  null, and `OnEnable` NRE'd. `Initialize` now spells `PanelRenderer` out explicitly so the next such
+  change is a compile error. **Keep it explicit.**
+- `DebugShapes*`, `IPhysicsSpaceProvider`, `VesselAutopilot` and `Redux.ExtraModTypes.KerbalMod` are
+  surface-identical (`KerbalMod` only gained a `PM` PatchManager-scope property).
 
 ## UI design
 
@@ -423,5 +477,5 @@ bodies, including the near-zero-horizontal-velocity case and the near-radial (fa
 straight down) regime that broke several earlier approaches — see `landing_prediction_fixes.md` for
 the 10-round debugging log before touching `LandingPredictionManager.cs` again.
 
-Build-constraint reminder: the Unity asmdef compiles at **C# 9.0** (Unity 6000.4.1f1) — no
+Build-constraint reminder: the Unity asmdef compiles at **C# 9.0** (Unity 6000.5.0f1) — no
 file-scoped namespaces, no `with` on structs. See [[langversion-csharp9]].

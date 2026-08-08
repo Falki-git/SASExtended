@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
-using DebugTools.Utils;
 using KSP.Game;
 using KSP.Sim;
 using KSP.Sim.impl;
+using SASExtended.Rendering;
 using UnityEngine;
 
 namespace SASExtended.Managers
@@ -11,17 +11,23 @@ namespace SASExtended.Managers
 
 /// <summary>
 /// Draws optional in-world flight-axis visuals for the active vessel, toggled from the SAS Extended
-/// window's settings panel. Reuses the game's own debug-shape components and prefabs (the same ones the
-/// stock Vessel Tools debug window uses) so the visuals match the game's look for free - see
-/// <c>.claude/mod_specifics.md</c> and the Flight Axes design notes.
+/// window's settings panel. See <c>.claude/mod_specifics.md</c> and the Flight Axes design notes.
+///
+/// <para><b>Rendering.</b> These visuals originally reused the game's own <c>DebugShapes*</c>
+/// components and prefabs (the same ones the stock Vessel Tools debug window uses), so they matched the
+/// stock look for free. KSP2 Redux is removing the Shapes library those are built on - it was a
+/// significant frame-time cost - so everything here is now drawn with this mod's own
+/// <see cref="SASExtended.Rendering"/> primitives, built on plain Unity <c>LineRenderer</c>s and a mesh
+/// sphere. Nothing in this class depends on the game's rendering any more: no debug prefabs are loaded,
+/// so no visual can be blocked by an addressable that fails to resolve.</para>
 ///
 /// The visuals, each an independent toggle (element name in parentheses):
 /// <list type="bullet">
 ///   <item><b>Control axes</b> - the vessel's CURRENT orientation, split into three separately
 ///   toggleable arrows drawn from the control point (navball-aligned): forward=blue
 ///   (<c>show-control-forward</c>), nose/up=white (<c>show-control-up</c>), right=red
-///   (<c>show-control-right</c>). Implemented by toggling the stock axes prefab's own child arrows, so
-///   the per-axis directions are exactly the game's.</item>
+///   (<c>show-control-right</c>). Three independent arrows sharing the control transform's rotation -
+///   see <see cref="UpdateControlAxes"/> for which local axis each one follows.</item>
 ///   <item><b>Commanded attitude</b> (<c>show-commanded-attitude</c>) - orange arrow along the nose
 ///   direction SAS Extended is steering toward right now (slew-limited
 ///   <see cref="SASManager.CommandedRotation"/>).</item>
@@ -71,32 +77,29 @@ public class FlightAxesVisualizer : MonoBehaviour
         CoMMarkerId,
     };
 
-    // The stock debug-tool prefabs. DebugArrow = a single Shapes line+cone arrow; DebugAxes = three of
-    // them as an RGB gizmo. Loaded once at startup via the game's asset provider (async callback), the
-    // same keys the stock VesselToolsWindowController loads.
-    private const string AxesPrefabKey = "Assets/Modules/DebugTools/Assets/DebugAxes.prefab";
-    private const string ArrowPrefabKey = "Assets/Modules/DebugTools/Assets/DebugArrow.prefab";
-
     // Velocity arrows hide below this speed (m/s): a near-zero velocity normalizes to an essentially
     // random direction, so pointing an arrow along it is just noise (most visible on a landed/at-rest
     // vessel, where gear-spring jitter dominates). Kept low so the arrow stays useful when nulling out
     // velocity for a precise landing; it's really just a noise floor. Tunable.
     private const float MinVelocityArrowSpeed = 0.1f;
 
-    // Navball-aligned orientation offset - the same value the stock debug tools apply so the gizmo
-    // reads like the navball (nose along the green/up arrow). Applied as the tracker's RotationOffset;
-    // because the tracker renders transform.rotation = physicsRotation * RotationOffset, feeding a
-    // Rotation whose "up" axis is direction D makes the arrow prefab's local +Z point along D. That's
-    // why every direction arrow below just builds Rotation.LookRotation(hint, D) - the arrow follows
-    // LookRotation's second ("up") argument.
-    private static readonly Quaternion _navballRotation = Quaternion.Euler(-90f, 0f, 0f);
+    // The navball convention every ArrowSpec below is written against: an arrow points along the fed
+    // Rotation's "up" (+Y) axis, so a full vessel-attitude Rotation points along the nose and any
+    // direction D is drawn via Rotation.LookRotation(hint, D) - i.e. LookRotation's SECOND argument is
+    // what gets drawn. The stock path achieved this with a Euler(-90,0,0) RotationOffset on the
+    // tracker; UpdateArrow now applies it directly. See the load-bearing comment there.
 
-    private DebugShapesAxesComponent _axesPrefab;
-    private DebugShapesArrowComponent _arrowPrefab;
+    // --- Control axes (three independent arrows sharing the control transform) ---------------------
+    private enum ControlAxis { Forward = 0, Up = 1, Right = 2 }
 
-    // --- Control axes (one shared RGB gizmo, per-child toggles) -----------------------------------
+    private const float ControlAxisLength = 2f;
+
+    // Indexed by ControlAxis. White nose, because green is taken by the orbital prograde arrow.
+    private static readonly Color[] _controlAxisColors = { Color.royalBlue, Color.white, Color.red };
+    private static readonly string[] _controlAxisNames = { "SASX_ControlFwd", "SASX_ControlUp", "SASX_ControlRight" };
+
     private bool _controlForward, _controlUp, _controlRight;
-    private DebugShapesAxesComponent _controlAxes;
+    private readonly ArrowPrimitive[] _controlAxes = new ArrowPrimitive[3];
 
     // --- Generic direction/attitude arrows --------------------------------------------------------
     // Static config per arrow id. Kept out of the live-instance dictionary so it survives everything.
@@ -106,18 +109,19 @@ public class FlightAxesVisualizer : MonoBehaviour
         public float Length;
         public bool RequiresEngaged;   // commanded/target only make sense while a mode is engaged
         public bool AnchorAtCoM;       // else anchored at the control point
-        public string TrackerSuffix;
+        public string ObjectName;   // GameObject name for the primitive (also handy in the hierarchy)
         public Func<VesselComponent, TelemetryComponent, Rotation> Rotation;
         // Optional per-frame visibility gate (e.g. hide a velocity arrow at ~0 speed where its
         // direction is just noise). Null = always visible (subject only to RequiresEngaged).
         public Func<VesselComponent, TelemetryComponent, bool> Visible;
     }
 
-    // One live arrow instance + the exact OnUpdate delegate it was subscribed with (needed to unsub).
+    // One live arrow instance. Since ArrowPrimitive is driven directly from this class's Update loop
+    // (rather than by a DebugShapesObjectTracker firing a per-instance callback), there is no
+    // subscription to keep track of for unsubscribing - just the primitive and its spec.
     private sealed class ArrowInstance
     {
-        public DebugShapesArrowComponent Component;
-        public Action<ITransformModel, SimulationObjectModel> Handler;
+        public ArrowPrimitive Primitive;
         public ArrowSpec Spec;
     }
 
@@ -129,8 +133,10 @@ public class FlightAxesVisualizer : MonoBehaviour
     private readonly Dictionary<string, ArrowInstance> _liveArrows = new Dictionary<string, ArrowInstance>();
 
     // --- CoM marker -------------------------------------------------------------------------------
+    private const float CoMMarkerRadius = 0.5f; // DebugShapesSphereMarker's own default
+
     private bool _showCoMMarker;
-    private DebugShapesSphereMarker _comMarker;
+    private SphereMarkerPrimitive _comMarker;
 
     // The vessel the current instances were built for (null = none). Compared each tick against the
     // live active vessel so a switch/undock/revert/flight-exit rebuilds against the new one.
@@ -153,12 +159,12 @@ public class FlightAxesVisualizer : MonoBehaviour
             // value otherwise.
             [CommandedId] = new ArrowSpec
             {
-                Color = new Color(1f, 0.5f, 0f), Length = 3f, RequiresEngaged = true, TrackerSuffix = "SASX_Commanded",
+                Color = new Color(1f, 0.5f, 0f), Length = 3f, RequiresEngaged = true, ObjectName = "SASX_Commanded",
                 Rotation = (v, tel) => SASManager.Instance.CommandedRotation,
             },
             [TargetId] = new ArrowSpec
             {
-                Color = new Color(0.6f, 0.2f, 0.9f), Length = 4f, RequiresEngaged = true, TrackerSuffix = "SASX_Target",
+                Color = new Color(0.6f, 0.2f, 0.9f), Length = 4f, RequiresEngaged = true, ObjectName = "SASX_Target",
                 Rotation = (v, tel) => SASManager.Instance.TargetRotation,
             },
 
@@ -166,24 +172,24 @@ public class FlightAxesVisualizer : MonoBehaviour
             // arg is the pointing direction, the first just a non-parallel hint).
             [OrbitalProgradeId] = new ArrowSpec
             {
-                Color = Color.green, Length = 3f, AnchorAtCoM = true, TrackerSuffix = "SASX_OrbPro",
+                Color = Color.green, Length = 3f, AnchorAtCoM = true, ObjectName = "SASX_OrbPro",
                 Rotation = (v, tel) => Rotation.LookRotation(tel.OrbitMovementNormal, tel.OrbitMovementPrograde),
             },
             [OrbitalNormalId] = new ArrowSpec
             {
-                Color = Color.magenta, Length = 3f, AnchorAtCoM = true, TrackerSuffix = "SASX_OrbNrm",
+                Color = Color.magenta, Length = 3f, AnchorAtCoM = true, ObjectName = "SASX_OrbNrm",
                 Rotation = (v, tel) => Rotation.LookRotation(tel.OrbitMovementRetrograde, tel.OrbitMovementNormal),
             },
             [OrbitalRadialInId] = new ArrowSpec
             {
-                Color = Color.cyan, Length = 3f, AnchorAtCoM = true, TrackerSuffix = "SASX_OrbRad",
+                Color = Color.cyan, Length = 3f, AnchorAtCoM = true, ObjectName = "SASX_OrbRad",
                 Rotation = (v, tel) => Rotation.LookRotation(tel.OrbitMovementPrograde, tel.OrbitMovementRadialIn),
             },
 
             // Surface velocity (SurfaceMovementPrograde is the normalized surface velocity direction).
             [SurfaceVelocityId] = new ArrowSpec
             {
-                Color = new Color(0.6f, 0.6f, 0.6f), Length = 2.5f, AnchorAtCoM = true, TrackerSuffix = "SASX_SrfVel",
+                Color = new Color(0.6f, 0.6f, 0.6f), Length = 2.5f, AnchorAtCoM = true, ObjectName = "SASX_SrfVel",
                 // The arrow follows LookRotation's "up" arg only when the "forward" arg is PERPENDICULAR
                 // to it (LookRotation sets +Z=forward exactly, +Y=up-projected-perpendicular). The
                 // orbital normal is not perpendicular to the surface-velocity direction in general, so
@@ -205,7 +211,7 @@ public class FlightAxesVisualizer : MonoBehaviour
             // projected out). Vector.dot/minus/scale reframe their arguments into a common frame.
             [HorizontalVelocityId] = new ArrowSpec
             {
-                Color = new Color(0.5f, 0.28f, 0.1f), Length = 2.5f, AnchorAtCoM = true, TrackerSuffix = "SASX_HrzVel",
+                Color = new Color(0.5f, 0.28f, 0.1f), Length = 2.5f, AnchorAtCoM = true, ObjectName = "SASX_HrzVel",
                 Rotation = (v, tel) =>
                 {
                     var up = tel.HorizonUp;
@@ -228,24 +234,9 @@ public class FlightAxesVisualizer : MonoBehaviour
     private void Awake()
     {
         Instance = this;
-        LoadPrefabs();
-    }
-
-    private void LoadPrefabs()
-    {
-        // Async - the callbacks may fire after the player has already toggled a visual on, so each
-        // rebuilds the current vessel's visuals once its prefab is available (Create* no-op when their
-        // prefab is still null). The CoM marker needs no prefab, so it's never blocked on this.
-        GameManager.Instance.Assets.Load<GameObject>(AxesPrefabKey, obj =>
-        {
-            _axesPrefab = obj.GetComponent<DebugShapesAxesComponent>();
-            RebuildForCurrentVessel();
-        }, logMissingKey: true);
-        GameManager.Instance.Assets.Load<GameObject>(ArrowPrefabKey, obj =>
-        {
-            _arrowPrefab = obj.GetComponent<DebugShapesArrowComponent>();
-            RebuildForCurrentVessel();
-        }, logMissingKey: true);
+        // No asset loading any more: every visual is drawn by this mod's own Rendering primitives, so
+        // nothing here waits on the game's debug prefabs (which are going away with Shapes) and
+        // nothing can be blocked by an addressable that fails to resolve.
     }
 
     /// <summary>
@@ -303,27 +294,22 @@ public class FlightAxesVisualizer : MonoBehaviour
         if (_builtVessel == null)
             return;
 
-        // The sphere marker has no tracker of its own (unlike the arrow/axes prefabs, which self-update
-        // each frame), so drive its position here from the live center of mass.
+        // Every visual is driven from here now - nothing self-updates any more. All of them re-derive
+        // their world position from the vessel's LIVE position each frame rather than caching a
+        // converted one, because the game continuously re-anchors its floating origin.
         if (_comMarker != null)
         {
             var physics = PhysicsSpace;
             if (physics != null)
-                _comMarker.SetCenter(physics.PositionToPhysics(_builtVessel.CenterOfMass));
+                _comMarker.SetCenter((Vector3)physics.PositionToPhysics(_builtVessel.CenterOfMass));
         }
 
-        // Maintain each arrow's visibility (engaged gate for commanded/target, speed gate for the
-        // velocity arrows) by activating/deactivating the GameObject - without destroying it, so
-        // toggling the condition back doesn't require rebuilding. Done here rather than in the arrows'
-        // own handlers because a deactivated GameObject stops updating itself.
-        foreach (var inst in _liveArrows.Values)
-        {
-            if (inst.Component == null)
-                continue;
-            bool visible = ComputeArrowVisible(inst.Spec, _builtVessel);
-            if (inst.Component.gameObject.activeSelf != visible)
-                inst.Component.gameObject.SetActive(visible);
-        }
+        UpdateControlAxes();
+
+        // Position/orient every arrow and maintain its visibility (engaged gate for commanded/target,
+        // speed gate for the velocity arrows). Hidden arrows are deactivated rather than destroyed, so
+        // the condition reversing brings them straight back.
+        UpdateArrows();
     }
 
     private void RebuildForCurrentVessel()
@@ -339,76 +325,81 @@ public class FlightAxesVisualizer : MonoBehaviour
 
     #region Control axes (current orientation - split into per-child toggles)
 
-    // The three control arrows share one stock axes gizmo instance; each toggle just enables/disables
-    // the prefab's matching child arrow (forward/up/right), which keeps their directions exactly the
-    // game's. The gizmo is created when the first of the three turns on and destroyed when all are off.
+    // The three control arrows are now three independent ArrowPrimitives sharing one source rotation
+    // (the vessel's control transform), rather than one stock axes gizmo whose child arrows were
+    // toggled. Each is created when its own toggle turns on and destroyed when it turns off.
     private void ApplyControlAxes()
     {
-        bool anyOn = _controlForward || _controlUp || _controlRight;
-        if (!anyOn)
+        ApplyControlAxis(ControlAxis.Forward, _controlForward);
+        ApplyControlAxis(ControlAxis.Up, _controlUp);
+        ApplyControlAxis(ControlAxis.Right, _controlRight);
+    }
+
+    private void ApplyControlAxis(ControlAxis axis, bool on)
+    {
+        int i = (int)axis;
+        if (!on)
         {
-            DestroyControlAxes();
+            _controlAxes[i]?.Destroy();
+            _controlAxes[i] = null;
             return;
         }
 
-        if (_controlAxes == null)
-            CreateControlAxes();
-        if (_controlAxes == null)
-            return; // prefab not loaded yet / no vessel - RebuildForCurrentVessel will retry
-
-        SetChildActive(_controlAxes.forward, _controlForward);
-        SetChildActive(_controlAxes.up, _controlUp);
-        SetChildActive(_controlAxes.right, _controlRight);
-    }
-
-    private static void SetChildActive(DebugShapesArrowComponent child, bool active)
-    {
-        if (child == null || child.gameObject == null)
-            return;
-        if (child.gameObject.activeSelf != active)
-            child.gameObject.SetActive(active);
-    }
-
-    private void CreateControlAxes()
-    {
-        if (_controlAxes != null || _axesPrefab == null || _builtVessel == null)
+        if (_controlAxes[i] != null || _builtVessel?.SimulationObject == null)
             return;
 
-        var axes = Instantiate(_axesPrefab.gameObject, transform).GetComponent<DebugShapesAxesComponent>();
-        axes.arrowLineLength = 2f;
-        axes.forwardColor = Color.royalBlue;
-        axes.upColor = Color.white; // white nose (green is taken by orbital prograde)
-        axes.rightColor = Color.red;
-
-        var tracker = axes.GetComponent<DebugShapesObjectTracker>();
-        if (tracker != null)
-        {
-            tracker.RotationOffset = _navballRotation;
-            tracker.Setup(_builtVessel.SimulationObject, "SASX_Control", startTracking: true);
-            tracker.OnUpdate += UpdateControlAxes;
-        }
-        _controlAxes = axes;
+        _controlAxes[i] = new ArrowPrimitive(_controlAxisNames[i], transform, _controlAxisColors[i]);
+        UpdateControlAxes();
     }
 
-    private static void UpdateControlAxes(ITransformModel t, SimulationObjectModel o)
+    // Positions the control arrows along the vessel's current control-transform axes.
+    //
+    // The three local axes each arrow follows are the ONE thing here that could not be derived from the
+    // game assembly: DebugShapesAxesComponent only sets its children's colour and length, and their
+    // orientations lived in the DebugAxes prefab's transform hierarchy. What is certain is the "up"
+    // arrow, which the whole navball convention is built around - feeding a full vessel-attitude
+    // Rotation to an arrow makes it point along the nose, i.e. along the rotation's +Y (see the
+    // load-bearing comment in UpdateArrow). Forward and right are the orthonormal completion of that.
+    private void UpdateControlAxes()
     {
-        var vessel = o?.Vessel;
-        if (vessel == null)
+        if (_controlAxes[0] == null && _controlAxes[1] == null && _controlAxes[2] == null)
             return;
-        t.UpdatePosition(vessel.ControlTransform.Position);
-        t.UpdateRotation(vessel.ControlTransform.Rotation);
+
+        var physics = PhysicsSpace;
+        var control = _builtVessel?.ControlTransform;
+        if (physics == null || control == null)
+            return;
+
+        var origin = (Vector3)physics.PositionToPhysics(control.Position);
+        Quaternion rotation = physics.RotationToPhysics(control.Rotation);
+
+        // Forward and right are NEGATED; up is not. Confirmed in flight - with the un-negated basis the
+        // white/up arrow was already correct while the other two pointed exactly backwards, which is
+        // the signature of a 180-degree rotation about the up axis (it maps forward -> -forward and
+        // right -> -right and leaves up alone). In other words the gizmo's basis is the control
+        // rotation turned 180 degrees about its own nose axis. This is the piece that could not be
+        // derived from the assembly - DebugShapesAxesComponent only sets its children's colour and
+        // length, and their orientations lived in the DebugAxes prefab's transform hierarchy.
+        SetControlAxis(ControlAxis.Forward, origin, rotation * Vector3.back);
+        SetControlAxis(ControlAxis.Up, origin, rotation * Vector3.up);
+        SetControlAxis(ControlAxis.Right, origin, rotation * Vector3.left);
+    }
+
+    private void SetControlAxis(ControlAxis axis, Vector3 origin, Vector3 direction)
+    {
+        var arrow = _controlAxes[(int)axis];
+        if (arrow == null || !arrow.IsAlive)
+            return;
+        arrow.SetFromTo(origin, direction, ControlAxisLength);
     }
 
     private void DestroyControlAxes()
     {
-        if (_controlAxes == null)
-            return;
-        var tracker = _controlAxes.GetComponent<DebugShapesObjectTracker>();
-        if (tracker != null)
-            tracker.OnUpdate -= UpdateControlAxes;
-        if (_controlAxes.gameObject != null)
-            Destroy(_controlAxes.gameObject);
-        _controlAxes = null;
+        for (int i = 0; i < _controlAxes.Length; i++)
+        {
+            _controlAxes[i]?.Destroy();
+            _controlAxes[i] = null;
+        }
     }
 
     #endregion
@@ -417,48 +408,68 @@ public class FlightAxesVisualizer : MonoBehaviour
 
     private void CreateArrow(string id)
     {
-        if (_liveArrows.ContainsKey(id) || _arrowPrefab == null || _builtVessel == null)
+        // SimulationObject, not just the vessel - see CreateControlAxes for why.
+        if (_liveArrows.ContainsKey(id) || _builtVessel?.SimulationObject == null)
             return;
         if (!_arrowSpecs.TryGetValue(id, out var spec))
             return;
 
-        var arrow = Instantiate(_arrowPrefab.gameObject, transform).GetComponent<DebugShapesArrowComponent>();
-        arrow.color = spec.Color;
-        arrow.lineLength = spec.Length;
-
-        // Captures spec; stored on the instance so the exact same delegate can be unsubscribed later.
-        Action<ITransformModel, SimulationObjectModel> handler = (t, o) =>
+        var instance = new ArrowInstance
         {
-            var vessel = o?.Vessel;
-            if (vessel == null)
-                return;
-            if (spec.RequiresEngaged && !Engaged)
-                return;
-            var telemetry = o.Telemetry;
-            if (telemetry == null)
-                return;
-            t.UpdatePosition(spec.AnchorAtCoM ? vessel.CenterOfMass : vessel.ControlTransform.Position);
-            t.UpdateRotation(spec.Rotation(vessel, telemetry));
-        };
-
-        var tracker = arrow.GetComponent<DebugShapesObjectTracker>();
-        if (tracker != null)
-        {
-            tracker.RotationOffset = _navballRotation;
-            tracker.Setup(_builtVessel.SimulationObject, spec.TrackerSuffix, startTracking: true);
-            tracker.OnUpdate += handler;
-        }
-
-        _liveArrows[id] = new ArrowInstance
-        {
-            Component = arrow,
-            Handler = handler,
+            Primitive = new ArrowPrimitive(spec.ObjectName, transform, spec.Color),
             Spec = spec,
         };
+        _liveArrows[id] = instance;
 
-        // Start with the correct visibility so there's no one-frame flash of a stale/at-rest direction
-        // the instant it's created (Update maintains it thereafter).
-        arrow.gameObject.SetActive(ComputeArrowVisible(spec, _builtVessel));
+        // Drive it once immediately rather than waiting for the next Update: a freshly created
+        // primitive has no geometry yet, so it would otherwise show as a one-frame artifact at the
+        // origin the instant a toggle is switched on.
+        UpdateArrow(instance, PhysicsSpace, _builtVessel.SimulationObject.Telemetry);
+    }
+
+    // Drives every live arrow's world position, direction and visibility. This is the work
+    // DebugShapesObjectTracker used to do for us: ask the spec for a sim-space Rotation, convert
+    // sim -> Unity world, and write it into the primitive.
+    //
+    // Recomputed from the vessel's LIVE position every frame and never cached across frames, because
+    // the game continuously re-anchors its floating origin - caching a converted absolute position is
+    // exactly the bug the landing-prediction visuals spent several rounds on (see
+    // landing_prediction_fixes.md rounds 9/10).
+    private void UpdateArrows()
+    {
+        if (_liveArrows.Count == 0)
+            return;
+
+        var physics = PhysicsSpace;
+        var telemetry = _builtVessel?.SimulationObject?.Telemetry;
+        foreach (var instance in _liveArrows.Values)
+            UpdateArrow(instance, physics, telemetry);
+    }
+
+    private void UpdateArrow(ArrowInstance instance, IPhysicsSpaceProvider physics, TelemetryComponent telemetry)
+    {
+        if (instance?.Primitive == null || !instance.Primitive.IsAlive)
+            return;
+
+        // Visibility is evaluated here, from the always-running Update loop, rather than inside the
+        // arrow's own update - a hidden arrow that gated itself could never decide to re-show.
+        bool visible = ComputeArrowVisible(instance.Spec, _builtVessel);
+        instance.Primitive.SetActive(visible);
+        if (!visible || physics == null || telemetry == null)
+            return;
+
+        var spec = instance.Spec;
+        var anchor = spec.AnchorAtCoM ? _builtVessel.CenterOfMass : _builtVessel.ControlTransform.Position;
+        var origin = (Vector3)physics.PositionToPhysics(anchor);
+
+        // THE LOAD-BEARING LINE: an arrow points along its Rotation's UP (+Y) axis, not its forward.
+        // That was the stock debug arrows' convention too - the tracker applied a Euler(-90,0,0)
+        // RotationOffset, which maps the arrow prefab's local +Z onto the fed rotation's +Y - and every
+        // ArrowSpec above is written for it, which is why they all build
+        // Rotation.LookRotation(hint, direction) and expect the SECOND argument to be what gets drawn.
+        // Swapping this to `* Vector3.forward` silently points all seven arrows somewhere else.
+        Quaternion worldRotation = physics.RotationToPhysics(spec.Rotation(_builtVessel, telemetry));
+        instance.Primitive.SetFromTo(origin, worldRotation * Vector3.up, spec.Length);
     }
 
     // Whether an arrow should currently be shown: engaged-gated arrows (commanded/target) need a mode
@@ -481,14 +492,7 @@ public class FlightAxesVisualizer : MonoBehaviour
     {
         if (!_liveArrows.TryGetValue(id, out var inst))
             return;
-        if (inst.Component != null)
-        {
-            var tracker = inst.Component.GetComponent<DebugShapesObjectTracker>();
-            if (tracker != null)
-                tracker.OnUpdate -= inst.Handler;
-            if (inst.Component.gameObject != null)
-                Destroy(inst.Component.gameObject);
-        }
+        inst.Primitive?.Destroy();
         _liveArrows.Remove(id);
     }
 
@@ -501,21 +505,15 @@ public class FlightAxesVisualizer : MonoBehaviour
         if (_comMarker != null || _builtVessel == null)
             return;
 
-        var go = new GameObject("SASX_CoM");
-        go.transform.parent = transform;
-        var marker = go.AddComponent<DebugShapesSphereMarker>();
-        marker.SetEnabled(true);
-        // Position is driven each frame in Update (the marker has no tracker of its own). Radius uses
-        // DebugShapesSphereMarker's own default (0.5m, yellow), matching the stock CoM debug look.
-        _comMarker = marker;
+        // Radius/colour match DebugShapesSphereMarker's own defaults, so the marker keeps the size and
+        // colour it had on the stock path.
+        _comMarker = new SphereMarkerPrimitive("SASX_CoM", transform, Color.yellow, CoMMarkerRadius);
+        // Position is driven each frame from Update.
     }
 
     private void DestroyCoMMarker()
     {
-        if (_comMarker == null)
-            return;
-        if (_comMarker.gameObject != null)
-            Destroy(_comMarker.gameObject);
+        _comMarker?.Destroy();
         _comMarker = null;
     }
 

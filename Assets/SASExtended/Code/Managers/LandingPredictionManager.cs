@@ -5,8 +5,8 @@ using KSP.Rendering;
 using KSP.Sim;
 using KSP.Sim.impl;
 using SASExtended.PureMath;
+using SASExtended.Rendering;
 using SASExtended.Utilities;
-using Shapes;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -110,10 +110,9 @@ public class LandingPredictionManager : MonoBehaviour
     private AnimationCurve _widthCurve;
     private int _widthCurveKeyCount;
 
-    private GameObject _markerGo;
     private ReticleMarker _marker;
 
-    // Tracks whether _lineGo/_markerGo currently exist, so DestroyVisuals() can no-op instead of
+    // Tracks whether the line/marker visuals currently exist, so DestroyVisuals() can no-op instead of
     // running its teardown (several null checks + a field reset) every single frame while gated
     // off/no valid prediction - both are common per-frame steady states (the feature is disabled by
     // default, and UpdateVisualPositions calls DestroyVisuals() every frame a recompute doesn't
@@ -472,9 +471,10 @@ public class LandingPredictionManager : MonoBehaviour
 
         Vector3d impactOffsetWorld = physics.VectorToPhysics(new Vector(_predictionFrame, _impactOffset));
         Vector3d impactNormalWorld = physics.VectorToPhysics(new Vector(_predictionFrame, _impactNormal));
-        _marker.Center = vesselWorldNow + impactOffsetWorld;
-        _marker.Normal = ((Vector3)impactNormalWorld).normalized;
-        _marker.Color = Settings.LandingPredictionMarkerColor.Value;
+        _marker.SetPose(
+            (Vector3)(vesselWorldNow + impactOffsetWorld),
+            ((Vector3)impactNormalWorld).normalized,
+            Settings.LandingPredictionMarkerColor.Value);
     }
 
     private void CreateVisuals()
@@ -490,53 +490,83 @@ public class LandingPredictionManager : MonoBehaviour
             _line.useWorldSpace = true;
             // Per-vertex widths and color are set every frame in UpdateVisualPositions - no need
             // for static start/end values here.
-            _line.material = CreateOverlayMaterial(Settings.LandingPredictionLineColor.Value, out _lineMaterial);
+            _lineMaterial = OverlayMaterial.Create(Settings.LandingPredictionLineColor.Value);
+            _line.material = _lineMaterial;
 
             _linePositionsBuffer = new Vector3[TrajectorySampleCount];
         }
 
-        if (_markerGo == null)
-        {
-            _markerGo = new GameObject("SASX_LandingMarker");
-            _markerGo.transform.parent = transform;
-            _marker = _markerGo.AddComponent<ReticleMarker>();
-            _marker.Radius = MarkerRadiusMeters;
-            _marker.LineThickness = MarkerLineThicknessMeters;
-        }
+        if (_marker == null)
+            _marker = new ReticleMarker(transform, MarkerRadiusMeters, MarkerLineThicknessMeters);
     }
 
-    // Draws the impact marker as a flat crosshair-in-circle reticle laid against the ground
-    // (oriented to the local terrain normal), using the Shapes library's immediate-mode API
-    // directly - the same one the game's own DebugShapesDraw wraps for the sphere/line/cuboid
-    // primitives it exposes, none of which fit a flat ground reticle. Kept as its own component
-    // (rather than nested drawing calls in UpdateVisualPositions) because Shapes draws are only
-    // valid from within a Camera.onPreRender callback, which KerbalImmediateModeShapeDrawer
-    // (the game's own base class for this) already wires up.
-    private class ReticleMarker : KerbalImmediateModeShapeDrawer
+    // Draws the impact marker as a flat crosshair-in-circle reticle laid against the ground (oriented
+    // to the local terrain normal): a ring plus two diameters.
+    //
+    // Previously drawn with the Shapes immediate-mode API from a Camera.onPreRender callback (via the
+    // game's KerbalImmediateModeShapeDrawer). Redux is removing Shapes, so this is now three
+    // PolylinePrimitives - persistent meshes that are only rewritten when the impact point actually
+    // moves, rather than re-issued per camera per frame.
+    private sealed class ReticleMarker
     {
-        public Vector3 Center { get; set; }
-        public Vector3 Normal { get; set; } = Vector3.up;
-        public float Radius { get; set; } = 5f;
-        public float LineThickness { get; set; } = 0.4f;
-        public Color Color { get; set; } = Color.white;
+        // Enough segments that a 5m ring reads as a circle rather than a polygon at close range.
+        private const int RingSegments = 48;
 
-        public override void DrawShapes(Camera cam)
+        private readonly PolylinePrimitive _ring;
+        private readonly PolylinePrimitive _crossA;
+        private readonly PolylinePrimitive _crossB;
+        private readonly Vector3[] _ringBuffer = new Vector3[RingSegments];
+        private readonly Vector3[] _segmentBuffer = new Vector3[2];
+
+        private readonly float _radius;
+
+        public ReticleMarker(Transform parent, float radius, float lineThickness)
         {
-            using (Draw.Command(cam))
-            {
-                Draw.ZTest = CompareFunction.Always;
-                Draw.BlendMode = ShapesBlendMode.Additive;
-                Draw.ThicknessSpace = ThicknessSpace.Meters;
-                Draw.Ring(Center, Normal, Radius, LineThickness, Color);
+            _radius = radius;
+            _ring = new PolylinePrimitive("SASX_LandingMarkerRing", parent, Color.white, lineThickness, loop: true);
+            _crossA = new PolylinePrimitive("SASX_LandingMarkerCrossA", parent, Color.white, lineThickness, loop: false);
+            _crossB = new PolylinePrimitive("SASX_LandingMarkerCrossB", parent, Color.white, lineThickness, loop: false);
+        }
 
-                // Arbitrary (but stable frame-to-frame) in-plane basis perpendicular to Normal -
-                // a crosshair reads the same regardless of which way it's rotated about Normal.
-                var rot = Quaternion.FromToRotation(Vector3.up, Normal);
-                Vector3 tangent = rot * Vector3.right;
-                Vector3 bitangent = rot * Vector3.forward;
-                Draw.Line(Center - tangent * Radius, Center + tangent * Radius, LineThickness, LineEndCap.None, Color);
-                Draw.Line(Center - bitangent * Radius, Center + bitangent * Radius, LineThickness, LineEndCap.None, Color);
-            }
+        public void SetPose(Vector3 center, Vector3 normal, Color color)
+        {
+            if (normal.sqrMagnitude < 1e-6f)
+                return;
+
+            _ring.SetColor(color);
+            _crossA.SetColor(color);
+            _crossB.SetColor(color);
+
+            int count = PolylinePrimitive.BuildCircle(_ringBuffer, RingSegments, center, normal, _radius);
+            if (count > 0)
+                _ring.SetPoints(_ringBuffer, count);
+
+            // Arbitrary (but stable frame-to-frame) in-plane basis perpendicular to the normal - a
+            // crosshair reads the same regardless of how it is rotated about the normal.
+            var rotation = Quaternion.FromToRotation(Vector3.up, normal);
+            SetDiameter(_crossA, center, rotation * Vector3.right);
+            SetDiameter(_crossB, center, rotation * Vector3.forward);
+        }
+
+        private void SetDiameter(PolylinePrimitive line, Vector3 center, Vector3 axis)
+        {
+            _segmentBuffer[0] = center - axis * _radius;
+            _segmentBuffer[1] = center + axis * _radius;
+            line.SetPoints(_segmentBuffer, 2);
+        }
+
+        public void SetActive(bool active)
+        {
+            _ring.SetActive(active);
+            _crossA.SetActive(active);
+            _crossB.SetActive(active);
+        }
+
+        public void Destroy()
+        {
+            _ring.Destroy();
+            _crossA.Destroy();
+            _crossB.Destroy();
         }
     }
 
@@ -556,15 +586,6 @@ public class LandingPredictionManager : MonoBehaviour
 
     // Always-on-top recipe (no depth occlusion/horizon culling - see the plan) confirmed already
     // in use by Orbital Survey's GroundTrackingRenderer.
-    private static Material CreateOverlayMaterial(Color color, out Material outMat)
-    {
-        var shader = Shader.Find("Sprites/Default") ?? Shader.Find("Unlit/Color");
-        outMat = new Material(shader);
-        outMat.color = color;
-        outMat.SetInt("_ZTest", (int)UnityEngine.Rendering.CompareFunction.Always);
-        outMat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Overlay;
-        return outMat;
-    }
 
     private void DestroyVisuals()
     {
@@ -585,9 +606,10 @@ public class LandingPredictionManager : MonoBehaviour
             Destroy(_lineMaterial);
         _lineMaterial = null;
 
-        if (_markerGo != null)
-            Destroy(_markerGo);
-        _markerGo = null;
+        // The reticle owns three GameObjects and three runtime materials of its own, so it must be told
+        // to tear itself down - dropping the reference would leak all six every time the prediction
+        // goes invalid, which happens routinely (landed, no solid surface, orbit never descends).
+        _marker?.Destroy();
         _marker = null;
 
         // _line is gone (destroyed above), so the curve it referenced needs rebuilding against

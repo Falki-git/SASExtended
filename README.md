@@ -104,7 +104,7 @@ the more interesting problems it solves:
 
 ## Tech stack
 
-Unity `6000.4.1f1` · C# 9 · ReduxLib → SpaceWarp2 modding stack ·
+Unity `6000.5.0f1` · C# 9 · ReduxLib → SpaceWarp2 modding stack ·
 Harmony patching · UI Toolkit (UXML/USS) · ThunderKit build pipeline · Unity Test Framework
 
 ## Building
