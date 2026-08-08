@@ -19,7 +19,7 @@ MonoBehaviour:
 
     Enables additional
     modes, attitudes tweaks, hover and landing prediction.'
-  version: 1.1.0
+  version: 1.1.1
   versionCheck: https://raw.githubusercontent.com/Falki-git/SASExtended/refs/heads/main/Assets/SASExtended/swinfo.json
   minKsp2Version: 0.2.9.0
   maxKsp2Version: '*'

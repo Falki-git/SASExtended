@@ -5,7 +5,7 @@
   "author": "Falki",
   "description": "Extends the functionalities of stock SAS.\nEnables additional modes, attitudes tweaks, hover and landing prediction.",
   "source": "https://github.com/Falki-git/SASExtended",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "version_check": "https://raw.githubusercontent.com/Falki-git/SASExtended/refs/heads/main/Assets/SASExtended/swinfo.json",
   "ksp2_version": {
     "min": "0.2.9.0",
