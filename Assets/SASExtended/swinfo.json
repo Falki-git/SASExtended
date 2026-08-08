@@ -8,7 +8,7 @@
   "version": "1.1.0",
   "version_check": "https://raw.githubusercontent.com/Falki-git/SASExtended/refs/heads/main/Assets/SASExtended/swinfo.json",
   "ksp2_version": {
-    "min": "0.2.8.5",
+    "min": "0.2.9.0",
     "max": "*"
   },
   "dependencies": [
