@@ -6,7 +6,10 @@ namespace SASExtended.UI
     public class SceneController
     {
         public static SceneController Instance { get; } = new SceneController();
-        public UIDocument MainGui { get; set; }
+
+        // The window's renderer. PanelRenderer, not UIDocument: as of KSP2 0.2.9.0 / UitkForKsp2
+        // 26w32b, Window.Create builds windows on Unity's PanelRenderer and never adds a UIDocument.
+        public PanelRenderer MainGui { get; set; }
         public MainWindowController MainWindowController { get; set; }
 
         private SceneController() { }
@@ -39,8 +42,13 @@ namespace SASExtended.UI
         /// </summary>
         public void Initialize(VisualTreeAsset windowUxml)
         {
-            // Create the window
-            var mainWindow = Window.Create(_windowOptions, windowUxml);
+            // Create the window. Spell the type out rather than using `var`: Window.Create's return
+            // type changed (UIDocument -> PanelRenderer) in UitkForKsp2 26w32b, and because `var`
+            // absorbed that silently, the only symptom was MainWindowController.OnEnable NREing on a
+            // null GetComponent<UIDocument>(). An explicit type turns the next such change into a
+            // compile error instead.
+            PanelRenderer mainWindow = Window.Create(_windowOptions, windowUxml);
+            MainGui = mainWindow;
             // Add a controller for the UI to the window's game object
             MainWindowController = mainWindow.gameObject.AddComponent<MainWindowController>();
         }

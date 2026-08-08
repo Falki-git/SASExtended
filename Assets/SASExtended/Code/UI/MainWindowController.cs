@@ -19,10 +19,19 @@ public class MainWindowController : MonoBehaviour
 {
     private static readonly ReduxLib.Logging.ILogger _LOGGER = ReduxLib.ReduxLib.GetLogger("SASExtended|MainWindowController");
 
-    // The UIDocument component of the window game object
-    private UIDocument _window;
+    // The PanelRenderer component of the window game object.
+    // KSP2 0.2.9.0 / UitkForKsp2 26w32b moved windows off UIDocument onto Unity's PanelRenderer:
+    // Window.Create now returns a PanelRenderer and no UIDocument is ever added to the window's
+    // GameObject, so GetComponent<UIDocument>() silently returns null here. (This compiled fine
+    // through the port because Initialize() takes the result of Window.Create with `var`.)
+    private PanelRenderer _window;
 
     private VisualElement _root;
+
+    // False until BuildWindow has fully resolved _root and run every WireSection against it. Gates
+    // Update(), which otherwise dereferences the cached elements every frame - and would do so against
+    // either null (root never resolved) or released elements (mid-rebuild).
+    private bool _isWired;
 
     private float _lastStatusUpdateTime = float.NegativeInfinity;
     private Label _statusLabel;
@@ -156,7 +165,7 @@ public class MainWindowController : MonoBehaviour
         _isWindowOpen = value;
 
         // Set the display style of the root element to show or hide the window
-        _root.style.display = value ? DisplayStyle.Flex : DisplayStyle.None;
+        ApplyRootDisplay();
         // Alternatively, you can deactivate the window game object to close the window and stop it from updating,
         // which is useful if you perform expensive operations in the window update loop. However, this will also
         // mean you will have to re-register any event handlers on the window elements when re-enabled in OnEnable.
@@ -168,18 +177,76 @@ public class MainWindowController : MonoBehaviour
             ?.SetValue(value);
     }
 
+    // Pushes _isWindowOpen onto the root's display style. Separate from SetOpenWithoutPersisting so a
+    // post-rebuild re-wire can re-apply the current state without re-running the appbar/logging side of
+    // it. Silently no-ops while unwired: BuildWindow bails out (leaving _root null) when the root never
+    // resolved, and it already logged the real reason - no need to add an NRE per show/hide on top.
+    private void ApplyRootDisplay()
+    {
+        if (_root == null)
+            return;
+
+        _root.style.display = _isWindowOpen ? DisplayStyle.Flex : DisplayStyle.None;
+    }
+
     /// <summary>
     /// Runs when the window is first created, and every time the window is re-enabled.
     /// </summary>
     private void OnEnable()
     {
-        // Get the UIDocument component from the game object
-        _window = GetComponent<UIDocument>();
+        // Get the PanelRenderer component from the game object
+        _window = GetComponent<PanelRenderer>();
+
+        // Re-wire whenever UI Toolkit rebuilds the panel's visual tree. PanelRenderer.InitRootVisualElement
+        // clears the old tree with VisualElementClearOptions.RecursiveReleaseResources and clones a fresh
+        // one, so every element cached below (_root, _statusLabel, all the toggles) is left pointing at
+        // RELEASED elements. Those don't fail as clean NREs - touching a released element's style/
+        // computedStyle reads freed layout memory and throws from inside UnmanagedDataStore, once per
+        // frame from Update(). (Orbital Survey hit exactly this after the Unity 6.5 update.)
+        // We never deactivate the window GameObject ourselves - SetOpenWithoutPersisting flips
+        // style.display precisely so the tree survives - but a rebuild is not ours to rule out, so
+        // reattach rather than assume. Unregistered in OnDisable so a re-enable doesn't stack callbacks.
+        if (_window != null)
+        {
+            _window.UnregisterUIReloadCallback(OnPanelUiReloaded);
+            _window.RegisterUIReloadCallback(OnPanelUiReloaded);
+        }
+
+        BuildWindow();
+    }
+
+    // Fired by PanelRenderer after it rebuilds the visual tree. The rebuilt root is a different element,
+    // so re-resolve and re-run every WireSection - the wiring is already written to be re-runnable
+    // (OnEnable itself re-runs on every re-enable), and the fresh elements carry no callbacks from the
+    // previous tree, so this re-registers rather than double-registers.
+    private void OnPanelUiReloaded(PanelRenderer renderer, VisualElement rootElement)
+    {
+        _LOGGER.LogDebug("Panel UI reloaded - re-resolving the window root and re-wiring the window.");
+        BuildWindow();
+    }
+
+    private void BuildWindow()
+    {
+        _isWired = false;
 
         // Get the root element of the window.
-        // Since we're cloning the UXML tree from a VisualTreeAsset, the actual root element is a TemplateContainer,
-        // so we need to get the first child of the TemplateContainer to get our actual root VisualElement.
-        _root = _window.rootVisualElement[0];
+        // Since we're cloning the UXML tree from a VisualTreeAsset, the panel's own root holds a
+        // TemplateContainer wrapper rather than our element. GetWindowRoot() (UitkForKsp2.API.Extensions)
+        // walks down through those wrappers for us and returns the real root - it replaces the old
+        // `_window.rootVisualElement[0]`, so do NOT index into it again.
+        // Window.Create already ran WindowComponent.ResolveNow() before handing the renderer back, so
+        // the root is resolved by the time AddComponent<MainWindowController>() runs OnEnable.
+        _root = _window != null ? _window.GetWindowRoot() : null;
+        if (_root == null)
+        {
+            // Bail out loudly instead of NREing halfway through the wiring below: every WireSection
+            // dereferences _root, so a null here would otherwise produce a wall of unrelated errors.
+            _LOGGER.LogError(
+                _window == null
+                    ? "No PanelRenderer on the window GameObject - UitkForKsp2's Window.Create contract changed again; the window cannot be built."
+                    : "PanelRenderer.GetWindowRoot() returned null - the window UXML did not resolve; the window cannot be built.");
+            return;
+        }
 
         // Each section below wires one logical piece of the window (a tab's toggles, the H/P/R offset
         // rows, the hover panel, ...) and is run through WireSection rather than called directly - see
@@ -202,6 +269,14 @@ public class MainWindowController : MonoBehaviour
         WireSection(nameof(WireLandingPredictionToggle), WireLandingPredictionToggle);
         WireSection(nameof(WireSettingsButton), WireSettingsButton);
         WireSection(nameof(WireCloseButton), WireCloseButton);
+
+        // Only now is it safe for Update() to touch the cached elements.
+        _isWired = true;
+
+        // Re-apply the current open/closed state to the newly resolved root. On the first build this is
+        // redundant (the plugin calls SetVisible right after Initialize), but after a rebuild the fresh
+        // root defaults to visible, which would pop a closed window back open.
+        ApplyRootDisplay();
     }
 
     // Mirrors the subscription in Update() - without this, the Disengaged event holds a strong
@@ -213,6 +288,15 @@ public class MainWindowController : MonoBehaviour
         if (_subscribedSasManager != null)
             _subscribedSasManager.Disengaged -= OnSasManagerDisengaged;
         _subscribedSasManager = null;
+
+        // Same reasoning one level up: the PanelRenderer outlives this component, so a reload callback
+        // left registered would re-run the wiring against a disabled controller (and stack a second
+        // registration on the next enable).
+        if (_window != null)
+            _window.UnregisterUIReloadCallback(OnPanelUiReloaded);
+
+        // The cached elements belong to a tree we're no longer tracking; force a rebuild on re-enable.
+        _isWired = false;
     }
 
     // Runs one logical piece of OnEnable's wiring in isolation. Require<T> below logs a specific error
@@ -572,6 +656,11 @@ public class MainWindowController : MonoBehaviour
         }
 
         if (!IsWindowOpen)
+            return;
+
+        // Everything past here dereferences the cached UXML elements, so it must not run against a
+        // window that failed to build or is between a panel rebuild and its re-wire.
+        if (!_isWired)
             return;
 
         // Auto-disengage on node/target loss is handled by SASManager itself (independent of
