@@ -4,6 +4,14 @@
 **Date:** 2026-07-07
 **Stack:** KSP2 Redux · SpaceWarp2 ≥ 2.0.0 · ReduxLib · UitkForKsp2 · Unity **6000.4.1f1** · ThunderKit + Addressables · mod assembly compiled at C# **LangVersion 9.0**
 
+> **Still current on Unity 6000.5.0f1 / KSP2 0.2.9.0 (26w32b), re-verified 2026-08-08.** The
+> workaround below is unaffected by that update: `UnityEngine.UIElements.VisualElementFactoryRegistry`
+> still exists as an internal class in `UnityEngine.UIElementsModule.dll` with a
+> `protected static void RegisterFactory(IUxmlFactory)` (reachable with
+> `BindingFlags.Static | BindingFlags.NonPublic`), and the legacy `UxmlFactory`/`UxmlTraits` path
+> still compiles — obsolete **warnings** only, not errors. Version-specific line numbers and
+> decompiled excerpts below are from the original 6000.4.1f1 investigation.
+
 ---
 
 ## TL;DR

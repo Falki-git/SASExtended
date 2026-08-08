@@ -8,9 +8,9 @@ for the current mod see `mod_specifics.md`.
 
 ## Facts
 
-- **File:** `Packages/KSP2_x64/Assembly-CSharp.dll` (~13 MB)
+- **File:** `Packages/KSP2_x64/Assembly-CSharp.dll` (~14 MB)
 - **Type count:** **~7,000 types** (incl. compiler-generated closures `<>c`, iterators `d__`).
-- **Engine:** Unity `6000.4.1f1`. Targets the game's own runtime, references many other
+- **Engine:** Unity `6000.5.0f1`. Targets the game's own runtime, references many other
   DLLs in `Packages/KSP2_x64/` (`SpaceWarp2.*`, `ReduxLib`, `UitkForKsp2`, `0Harmony`,
   Unity modules, `Newtonsoft.Json`, etc.).
 - **Publicization:** the shipped copy keeps original access modifiers (private/internal).
