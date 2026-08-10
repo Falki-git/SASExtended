@@ -1,9 +1,10 @@
 # Mod specifics — SAS Extended
 
-The current mod under development in this repo. Read this before doing feature work; keep the
-root [`CLAUDE.md`](../CLAUDE.md) mod-agnostic and put mod-specific detail here. For engine/stack
-idioms see [`architectural_patterns_ksp2.md`](architectural_patterns_ksp2.md) and
-[`ksp2_assembly_csharp_reference.md`](ksp2_assembly_csharp_reference.md). For custom UITK control
+The current mod under development in this repo. Read this before doing feature work; all
+mod-agnostic guidance lives in the shared [`CLAUDE.md`](../../.claude/CLAUDE.md) one level up —
+put mod-specific detail here. For engine/stack idioms see the shared
+[`architectural_patterns_ksp2.md`](../../.claude/architectural_patterns_ksp2.md) and
+[`ksp2_assembly_csharp_reference.md`](../../.claude/ksp2_assembly_csharp_reference.md). For custom UITK control
 gotchas and the UI Authoring Mode workflow see
 [`custom_uxml_controls.md`](custom_uxml_controls.md).
 
